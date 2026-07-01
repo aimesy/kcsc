@@ -153,9 +153,9 @@ function rowsFromArrow(table) {
 async function loadData() {
   setStatus('Loading', 'Reading manifest');
   await resolveDataBase();
-  setStatus('Loading', 'Starting DuckDB');
+  setStatus('Loading');
   await ensureDuckDB();
-  setStatus('Loading', 'Reading parquet tables');
+  setStatus('Loading');
   const tables = state.manifest.tables || {};
   await registerParquet('cases', tables.cases?.path || 'data/cases.parquet');
   await registerParquet('calendar', tables.calendar?.path || 'data/calendar.parquet');
@@ -182,7 +182,7 @@ async function loadData() {
   populateFilters();
   bindEvents();
   renderResults();
-  setStatus('Loaded', `${nf.format(state.cases.length)} cases`);
+  setStatus('Loaded');
 }
 
 function tableRowsCount(name) {
