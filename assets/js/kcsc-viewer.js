@@ -43,6 +43,10 @@ function dataUrl(path) {
   return new URL(path.replace(/^\/+/, ''), new URL(state.dataBase, location.href)).href;
 }
 
+function runningOnPages() {
+  return location.hostname === 'aimesy.github.io' && location.pathname.startsWith('/kcsc');
+}
+
 function caseLocation(row) {
   const num = text(row.case_number || row.display_case_number);
   const match = num.match(/(SEA|KNT)$/i);
@@ -86,10 +90,10 @@ async function fetchJsonFrom(base, path) {
 async function resolveDataBase() {
   const params = new URLSearchParams(location.search);
   const requested = normalizeBase(params.get('dataBase'));
+  const defaults = runningOnPages() ? [REMOTE_DATA_BASE, './'] : ['./', REMOTE_DATA_BASE];
   const candidates = [
     requested,
-    './',
-    REMOTE_DATA_BASE,
+    ...defaults,
   ].filter(Boolean);
 
   const errors = [];
