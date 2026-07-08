@@ -5,6 +5,16 @@ Static King County Superior Court case viewer.
 This repo is the public product surface. It loads normalized parquet tables and
 canonical case JSON from `aimesy/kcsc-data`.
 
+Published site:
+
+```text
+https://aimesy.github.io/kcsc/
+```
+
+No `CNAME` is committed right now. `kcsc.amyc.us` should only be restored after
+Cloudflare has a DNS-only `CNAME` from `kcsc` to `aimesy.github.io`; otherwise
+GitHub Pages redirects the working site to a dead hostname.
+
 Local smoke test from `C:\Users\amita\Amybot\projects`:
 
 ```bash
