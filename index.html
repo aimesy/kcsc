@@ -528,9 +528,9 @@
       color: inherit;
       display: grid;
       gap: 0.55rem;
-      grid-template-columns: 16px minmax(9.5rem, 0.24fr) minmax(0, 1fr) minmax(150px, 0.28fr);
+      grid-template-columns: 16px minmax(8.8rem, 0.2fr) minmax(0, 1fr) minmax(18rem, 0.42fr);
       min-width: 0;
-      padding: 0.42rem 0.8rem;
+      padding: 0.34rem 0.8rem;
       text-decoration: none;
     }
     .cs-case-state {
@@ -578,6 +578,7 @@
       font-family: var(--font-mono);
       font-size: 0.72rem;
       font-weight: 700;
+      line-height: 1.2;
       color: var(--ink);
       white-space: nowrap;
       overflow: hidden;
@@ -585,9 +586,10 @@
     }
     .cs-r-title-name {
       display: block;
-      margin-top: 0.08rem;
+      margin-top: 0;
       font-family: var(--font-serif);
       font-size: 0.82rem;
+      line-height: 1.2;
       color: var(--ink-2);
       white-space: nowrap;
       overflow: hidden;
@@ -618,6 +620,7 @@
       font-family: var(--font-mono);
       color: var(--ink-3);
       font-size: 0.66rem;
+      line-height: 1.2;
       text-align: right;
       white-space: nowrap;
       overflow: hidden;
@@ -862,12 +865,7 @@
       .cs-overview-grid { grid-template-columns: 1fr; }
       .cs-overview-grid > .cs-pane:first-child { border-right: 0; }
       .cs-case-row-link {
-        grid-template-columns: 16px minmax(8.5rem, 0.32fr) minmax(0, 1fr);
-      }
-      .cs-r-meta {
-        grid-column: 1 / -1;
-        text-align: left;
-        padding-left: 16px;
+        grid-template-columns: 16px minmax(7.8rem, 0.24fr) minmax(0, 1fr) minmax(13rem, 0.34fr);
       }
       .cs-dossier-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .cs-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -897,10 +895,12 @@
       .cs-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .cs-case-row-link {
         grid-template-columns: 16px minmax(0, 1fr);
+        gap: 0.2rem 0.55rem;
       }
-      .cs-case-row-link > span:nth-child(3),
+      .cs-r-title-name,
       .cs-r-meta {
         grid-column: 2 / -1;
+        text-align: left;
         padding-left: 0;
       }
       .cs-dossier-ledger { grid-template-columns: 1fr; }
@@ -954,7 +954,6 @@
             </button>
             <div class="cs-scope-menu" id="cs-scope-menu" role="menu" aria-label="Search scope">
               <label><input type="radio" name="cs-scope" value="cases" checked> Cases</label>
-              <label><input type="radio" name="cs-scope" value="docket"> Dockets</label>
               <label><input type="radio" name="cs-scope" value="parties"> Parties</label>
               <label><input type="radio" name="cs-scope" value="counsel"> Counsel</label>
             </div>
@@ -995,7 +994,7 @@
             </select>
           </div>
         </div>
-        <div class="cs-filter-note">Search scopes use the normalized parquet indexes, then the selected case opens its canonical JSON. Namespaces supported in the search box: <code>case:</code> <code>title:</code> <code>party:</code> <code>counsel:</code> <code>docket:</code> <code>cause:</code> <code>status:</code> <code>node:</code> <code>from:</code> and <code>to:</code>.</div>
+        <div class="cs-filter-note">Cases search scans case metadata, parties, counsel, and docket text. Parties and Counsel browse normalized entity rows; selecting an entity searches its matching cases. Namespaces supported in the search box: <code>case:</code> <code>title:</code> <code>party:</code> <code>counsel:</code> <code>docket:</code> <code>cause:</code> <code>status:</code> <code>node:</code> <code>from:</code> and <code>to:</code>.</div>
       </div>
       <div class="cs-tabstrip" id="cs-tabstrip" role="tablist" hidden></div>
     </div>
@@ -1003,6 +1002,6 @@
       <div class="cs-hint">Loading archived dockets...</div>
     </div>
   </div>
-  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260707-sfsc-shell-1"></script>
+  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260708-sfsc-entity-scopes-1"></script>
 </body>
 </html>

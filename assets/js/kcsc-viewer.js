@@ -3,6 +3,17 @@ const REMOTE_DATA_BASE = 'https://raw.githubusercontent.com/aimesy/kcsc-data/mas
 
 const $ = (id) => document.getElementById(id);
 const nf = new Intl.NumberFormat('en-US');
+const GENERIC_COUNSEL_NAMES = new Set([
+  'attorney',
+  'counsel',
+  'defendant',
+  'minor',
+  'other',
+  'petitioner',
+  'plaintiff',
+  'respondent',
+  'unknown',
+]);
 
 const state = {
   manifest: null,
@@ -16,6 +27,9 @@ const state = {
   partyRows: [],
   attorneyRows: [],
   calendarRows: [],
+  caseByNumber: new Map(),
+  partyEntities: [],
+  counselEntities: [],
   nextHearings: new Map(),
   docketIndex: new Map(),
   partyIndex: new Map(),
@@ -24,6 +38,7 @@ const state = {
   selectedCase: null,
   selectedTab: 'summary',
   detailCache: new Map(),
+  entityCaseFilter: null,
   scope: 'cases',
 };
 
@@ -277,6 +292,126 @@ function enrichCases(caseRows) {
   }));
 }
 
+function caseRowFor(caseNumber) {
+  return state.caseByNumber.get(text(caseNumber)) || null;
+}
+
+function normalizeEntityName(value) {
+  return norm(value)
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(?:the|a|an|of|for|to)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isGenericCounselName(value) {
+  return GENERIC_COUNSEL_NAMES.has(normalizeEntityName(value));
+}
+
+function addSetValue(set, value) {
+  const v = text(value);
+  if (v) set.add(v);
+}
+
+function addJsonValues(set, value, key = '') {
+  const parsed = safeJson(value);
+  const arr = Array.isArray(parsed) ? parsed : (Array.isArray(value) ? value : []);
+  const raw = text(value);
+  if (!arr.length && raw && !['[]', '{}', 'null'].includes(raw.toLowerCase())) addSetValue(set, raw);
+  for (const item of arr) {
+    if (typeof item === 'string') addSetValue(set, item);
+    else if (item && typeof item === 'object') addSetValue(set, key ? item[key] : Object.values(item).map(text).filter(Boolean).join(' '));
+  }
+}
+
+function compactEntity(entity) {
+  const cases = [...entity.caseNumbers]
+    .map(caseRowFor)
+    .filter(Boolean)
+    .sort((a, b) => text(b.filed_date).localeCompare(text(a.filed_date)) || text(a.case_number).localeCompare(text(b.case_number)));
+  return {
+    ...entity,
+    roles: [...(entity.roles || new Set())].sort((a, b) => a.localeCompare(b)),
+    attorneys: [...(entity.attorneys || new Set())].sort((a, b) => a.localeCompare(b)),
+    barNumbers: [...(entity.barNumbers || new Set())].sort((a, b) => a.localeCompare(b)),
+    represented: [...(entity.represented || new Set())].sort((a, b) => a.localeCompare(b)),
+    contacts: [...(entity.contacts || new Set())].sort((a, b) => a.localeCompare(b)),
+    addresses: [...(entity.addresses || new Set())].sort((a, b) => a.localeCompare(b)),
+    caseNumbers: [...entity.caseNumbers].sort((a, b) => a.localeCompare(b)),
+    cases,
+    rowCount: entity.rows.length,
+  };
+}
+
+function buildPartyEntities() {
+  const map = new Map();
+  for (const row of state.partyRows) {
+    const name = text(row.name);
+    if (!name) continue;
+    const key = normalizeEntityName(name) || norm(name);
+    if (!key) continue;
+    if (!map.has(key)) {
+      map.set(key, {
+        kind: 'parties',
+        key,
+        displayName: name,
+        roles: new Set(),
+        attorneys: new Set(),
+        addresses: new Set(),
+        caseNumbers: new Set(),
+        rows: [],
+      });
+    }
+    const entity = map.get(key);
+    if (name.length < entity.displayName.length || entity.displayName === entity.displayName.toUpperCase()) entity.displayName = name;
+    addSetValue(entity.roles, row.party_type);
+    addJsonValues(entity.attorneys, row.attorneys);
+    addSetValue(entity.addresses, row.party_address);
+    addSetValue(entity.caseNumbers, row.case_number);
+    entity.rows.push(row);
+  }
+  return [...map.values()].map(compactEntity).sort(sortEntities);
+}
+
+function buildCounselEntities() {
+  const map = new Map();
+  for (const row of state.attorneyRows) {
+    const name = text(row.name);
+    if (!name) continue;
+    if (isGenericCounselName(name)) continue;
+    const bar = normalizeEntityName(row.bar_number);
+    const key = bar ? `bar:${bar}` : (normalizeEntityName(name) || norm(name));
+    if (!key) continue;
+    if (!map.has(key)) {
+      map.set(key, {
+        kind: 'counsel',
+        key,
+        displayName: name,
+        barNumbers: new Set(),
+        represented: new Set(),
+        contacts: new Set(),
+        caseNumbers: new Set(),
+        rows: [],
+      });
+    }
+    const entity = map.get(key);
+    if (name.length < entity.displayName.length || entity.displayName === entity.displayName.toUpperCase()) entity.displayName = name;
+    addSetValue(entity.barNumbers, row.bar_number);
+    addJsonValues(entity.represented, row.parties_represented, 'name');
+    addSetValue(entity.contacts, row.contact_block);
+    addSetValue(entity.caseNumbers, row.case_number);
+    entity.rows.push(row);
+  }
+  return [...map.values()].map(compactEntity).sort(sortEntities);
+}
+
+function sortEntities(a, b) {
+  return (b.cases.length - a.cases.length)
+    || (b.rowCount - a.rowCount)
+    || text(a.displayName).localeCompare(text(b.displayName));
+}
+
 async function loadData() {
   setStatus('loading data', 'reading manifest');
   await resolveDataBase();
@@ -310,6 +445,9 @@ async function loadData() {
 
   buildSearchIndexes();
   state.cases = enrichCases(caseRows);
+  state.caseByNumber = new Map(state.cases.map((row) => [text(row.case_number), row]));
+  state.partyEntities = buildPartyEntities();
+  state.counselEntities = buildCounselEntities();
   populateFilters();
   bindEvents();
 
@@ -343,6 +481,40 @@ function populateFilters() {
   $('node-filter').innerHTML = optionList(state.cases.map((r) => r.portal_node_id), 'All nodes');
 }
 
+function scopeLabel(scope = state.scope) {
+  return {
+    cases: 'Cases',
+    parties: 'Parties',
+    counsel: 'Counsel',
+  }[scope] || 'Cases';
+}
+
+function scopePlaceholder(scope = state.scope) {
+  return {
+    cases: 'Search title, party, counsel, docket text, case number, or namespaces',
+    parties: 'Search party names, roles, counsel, case numbers, or namespaces',
+    counsel: 'Search counsel names, bar numbers, represented parties, case numbers, or namespaces',
+  }[scope] || 'Search title, party, counsel, docket text, case number, or namespaces';
+}
+
+function applyScopeUi(scope = state.scope) {
+  $('cs-scope-label').textContent = scopeLabel(scope);
+  $('cs-search').placeholder = scopePlaceholder(scope);
+  document.querySelectorAll('input[name="cs-scope"]').forEach((radio) => {
+    radio.checked = radio.value === scope;
+  });
+}
+
+function clearEntityCaseFilter() {
+  state.entityCaseFilter = null;
+}
+
+function findEntity(kind, key) {
+  if (!kind || !key) return null;
+  const rows = kind === 'parties' ? state.partyEntities : state.counselEntities;
+  return rows.find((row) => row.key === key) || null;
+}
+
 function bindEvents() {
   if (state.bound) return;
   state.bound = true;
@@ -360,11 +532,15 @@ function bindEvents() {
     $('sort-filter').value = 'filed_desc';
     state.selectedCaseNumber = '';
     state.selectedCase = null;
+    clearEntityCaseFilter();
     clearCaseHash();
     renderResults();
   });
 
-  $('cs-search').addEventListener('input', renderResults);
+  $('cs-search').addEventListener('input', () => {
+    clearEntityCaseFilter();
+    renderResults();
+  });
   ['type-filter', 'location-filter', 'status-filter', 'from-date', 'to-date', 'sort-filter', 'node-filter', 'content-filter']
     .forEach((id) => $(id).addEventListener('change', renderResults));
 
@@ -377,12 +553,8 @@ function bindEvents() {
   document.querySelectorAll('input[name="cs-scope"]').forEach((radio) => {
     radio.addEventListener('change', () => {
       state.scope = radio.value;
-      $('cs-scope-label').textContent = {
-        cases: 'Cases',
-        docket: 'Dockets',
-        parties: 'Parties',
-        counsel: 'Counsel',
-      }[state.scope] || 'Cases';
+      clearEntityCaseFilter();
+      applyScopeUi(state.scope);
       $('cs-scope-menu').classList.remove('open');
       $('cs-scope-btn').setAttribute('aria-expanded', 'false');
       renderResults();
@@ -394,6 +566,23 @@ function bindEvents() {
     if (!scopeWrap) {
       $('cs-scope-menu').classList.remove('open');
       $('cs-scope-btn').setAttribute('aria-expanded', 'false');
+    }
+
+    const entityLink = event.target.closest('[data-entity-search]');
+    if (entityLink) {
+      event.preventDefault();
+      const entity = findEntity(entityLink.getAttribute('data-entity-kind'), entityLink.getAttribute('data-entity-key'));
+      state.entityCaseFilter = entity ? {
+        kind: entity.kind,
+        key: entity.key,
+        label: entity.displayName,
+        caseNumbers: new Set(entity.caseNumbers),
+      } : null;
+      state.scope = 'cases';
+      applyScopeUi(state.scope);
+      $('cs-search').value = entityLink.getAttribute('data-entity-search') || '';
+      renderResults();
+      return;
     }
 
     const caseLink = event.target.closest('[data-case-open]');
@@ -480,12 +669,14 @@ function caseSearchText(row) {
   ].map(text).join(' ');
 }
 
-function scopedSearchText(row) {
+function caseFullSearchText(row) {
   const key = text(row.case_number);
-  if (state.scope === 'docket') return state.docketIndex.get(key) || '';
-  if (state.scope === 'parties') return state.partyIndex.get(key) || '';
-  if (state.scope === 'counsel') return state.counselIndex.get(key) || '';
-  return caseSearchText(row);
+  return [
+    caseSearchText(row),
+    state.partyIndex.get(key) || '',
+    state.counselIndex.get(key) || '',
+    state.docketIndex.get(key) || '',
+  ].map(text).join(' ');
 }
 
 function namespaceText(row, field) {
@@ -510,35 +701,39 @@ function matchesNamespace(row, filter) {
   return norm(namespaceText(row, filter.field)).includes(value);
 }
 
-function filteredCases() {
-  const parsed = parseQuery($('cs-search').value);
-  const type = text($('type-filter').value);
-  const loc = text($('location-filter').value);
-  const status = text($('status-filter').value);
-  const from = text($('from-date').value);
-  const to = text($('to-date').value);
-  const node = text($('node-filter').value);
-  const content = text($('content-filter').value);
-  const sort = text($('sort-filter').value);
+function currentFilters() {
+  return {
+    parsed: parseQuery($('cs-search').value),
+    type: text($('type-filter').value),
+    loc: text($('location-filter').value),
+    status: text($('status-filter').value),
+    from: text($('from-date').value),
+    to: text($('to-date').value),
+    node: text($('node-filter').value),
+    content: text($('content-filter').value),
+    sort: text($('sort-filter').value),
+  };
+}
 
-  let rows = state.cases.filter((row) => {
-    const filed = text(row.filed_date || row.filing_date);
-    if (parsed.free && !norm(scopedSearchText(row)).includes(parsed.free)) return false;
-    if (parsed.filters.some((filter) => !matchesNamespace(row, filter))) return false;
-    if (type && text(row.case_type) !== type) return false;
-    if (loc && text(row.location_code) !== loc) return false;
-    if (status && text(row.status) !== status) return false;
-    if (node && text(row.portal_node_id) !== node) return false;
-    if (from && (!filed || filed < from)) return false;
-    if (to && (!filed || filed > to)) return false;
-    if (content === 'docket' && !num(row.docket_entry_count)) return false;
-    if (content === 'hearing' && !num(row.calendar_count)) return false;
-    if (content === 'party' && !num(row.party_count)) return false;
-    if (content === 'counsel' && !num(row.attorney_count)) return false;
-    if (content === 'document' && !row.has_deferred_documents) return false;
-    return true;
-  });
+function caseMatchesFilters(row, filters, includeFreeText = true) {
+  const filed = text(row.filed_date || row.filing_date);
+  if (includeFreeText && filters.parsed.free && !norm(caseFullSearchText(row)).includes(filters.parsed.free)) return false;
+  if (filters.parsed.filters.some((filter) => !matchesNamespace(row, filter))) return false;
+  if (filters.type && text(row.case_type) !== filters.type) return false;
+  if (filters.loc && text(row.location_code) !== filters.loc) return false;
+  if (filters.status && text(row.status) !== filters.status) return false;
+  if (filters.node && text(row.portal_node_id) !== filters.node) return false;
+  if (filters.from && (!filed || filed < filters.from)) return false;
+  if (filters.to && (!filed || filed > filters.to)) return false;
+  if (filters.content === 'docket' && !num(row.docket_entry_count)) return false;
+  if (filters.content === 'hearing' && !num(row.calendar_count)) return false;
+  if (filters.content === 'party' && !num(row.party_count)) return false;
+  if (filters.content === 'counsel' && !num(row.attorney_count)) return false;
+  if (filters.content === 'document' && !row.has_deferred_documents) return false;
+  return true;
+}
 
+function sortCaseRows(rows, sort) {
   rows = rows.slice().sort((a, b) => {
     if (sort === 'filed_asc') return text(a.filed_date).localeCompare(text(b.filed_date)) || text(a.case_number).localeCompare(text(b.case_number));
     if (sort === 'case_number') return text(a.case_number).localeCompare(text(b.case_number));
@@ -547,6 +742,48 @@ function filteredCases() {
     return text(b.filed_date).localeCompare(text(a.filed_date)) || text(a.case_number).localeCompare(text(b.case_number));
   });
   return rows;
+}
+
+function filteredCases() {
+  const filters = currentFilters();
+  return sortCaseRows(state.cases.filter((row) => {
+    if (state.entityCaseFilter && !state.entityCaseFilter.caseNumbers.has(text(row.case_number))) return false;
+    return caseMatchesFilters(row, filters, true);
+  }), filters.sort);
+}
+
+function entitySearchText(kind, entity) {
+  const caseText = entity.cases.map(caseFullSearchText).join(' ');
+  if (kind === 'parties') {
+    return [
+      entity.displayName,
+      entity.roles.join(' '),
+      entity.attorneys.join(' '),
+      entity.addresses.join(' '),
+      caseText,
+    ].map(text).join(' ');
+  }
+  return [
+    entity.displayName,
+    entity.barNumbers.join(' '),
+    entity.represented.join(' '),
+    entity.contacts.join(' '),
+    caseText,
+  ].map(text).join(' ');
+}
+
+function filteredEntities(kind) {
+  const filters = currentFilters();
+  const rows = (kind === 'parties' ? state.partyEntities : state.counselEntities)
+    .map((entity) => ({
+      ...entity,
+      visibleCases: sortCaseRows(entity.cases.filter((row) => caseMatchesFilters(row, filters, false)), filters.sort),
+    }))
+    .filter((entity) => entity.visibleCases.length)
+    .filter((entity) => !filters.parsed.free || norm(entitySearchText(kind, entity)).includes(filters.parsed.free));
+  return rows.sort((a, b) => (b.visibleCases.length - a.visibleCases.length)
+    || (b.rowCount - a.rowCount)
+    || text(a.displayName).localeCompare(text(b.displayName)));
 }
 
 function activeChips() {
@@ -582,6 +819,15 @@ function renderResults() {
   if (!state.cases.length) return;
   state.selectedCase = null;
   $('cs-tabstrip').hidden = true;
+  applyScopeUi(state.scope);
+  if (state.scope === 'parties' || state.scope === 'counsel') {
+    renderEntityResults(state.scope);
+    return;
+  }
+  renderCaseResults();
+}
+
+function renderCaseResults() {
   $('cs-kicker').textContent = 'Cases';
   $('cs-entity-title').textContent = 'King County Superior Court';
   $('cs-entity-meta').textContent = sourceSummary();
@@ -592,6 +838,22 @@ function renderResults() {
   const count = `<p class="cs-count"><strong>${nf.format(rows.length)} case${rows.length === 1 ? '' : 's'}</strong><span>${nf.format(state.cases.length)} loaded</span>${chipHtml}</p>`;
   const body = rows.length ? renderCaseGroups(rows) : '<div class="cs-empty">No matching cases.</div>';
   $('cs-body').innerHTML = `${count}${renderMetricsHtml()}${body}`;
+}
+
+function renderEntityResults(kind) {
+  const rows = filteredEntities(kind);
+  const total = kind === 'parties' ? state.partyEntities.length : state.counselEntities.length;
+  const rawRows = kind === 'parties' ? state.partyRows.length : state.attorneyRows.length;
+  const label = scopeLabel(kind);
+  const noun = kind === 'parties' ? 'parties' : 'counsel';
+  const chips = activeChips();
+  const chipHtml = chips.map((chip) => `<span class="cs-badge cs-src">${escapeHtml(chip)}</span>`).join('');
+  $('cs-kicker').textContent = label;
+  $('cs-entity-title').textContent = 'King County Superior Court';
+  $('cs-entity-meta').textContent = `${nf.format(total)} ${noun} | ${nf.format(rawRows)} normalized rows`;
+  const count = `<p class="cs-count"><strong>${nf.format(rows.length)} ${noun}</strong><span>${nf.format(total)} loaded</span>${chipHtml}</p>`;
+  const body = rows.length ? renderEntityGroups(kind, rows) : `<div class="cs-empty">No matching ${noun}.</div>`;
+  $('cs-body').innerHTML = `${count}${body}`;
 }
 
 function grouped(rows, getter) {
@@ -614,6 +876,62 @@ function sortedEntries(map, mode = 'alpha') {
     });
   }
   return entries.sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function matterLabel(count) {
+  return `${nf.format(count)} matter${count === 1 ? '' : 's'}`;
+}
+
+function entityBand(rows) {
+  const thresholds = [1000, 500, 250, 100, 50, 25, 10, 5, 2, 1];
+  const groups = new Map();
+  for (const row of rows) {
+    const count = row.visibleCases.length;
+    const low = thresholds.find((n) => count >= n) || 1;
+    const label = low === 1 ? '1 matter' : `${nf.format(low)}+ matters`;
+    if (!groups.has(label)) groups.set(label, { low, rows: [] });
+    groups.get(label).rows.push(row);
+  }
+  return [...groups.values()].sort((a, b) => b.low - a.low);
+}
+
+function renderEntityGroups(kind, rows) {
+  const noun = kind === 'parties' ? 'parties' : 'counsel';
+  return entityBand(rows).map((group) => {
+    const totalMatters = group.rows.reduce((sum, row) => sum + row.visibleCases.length, 0);
+    return `<details class="cs-prefix-group" open>
+      <summary class="cs-prefix-head"><span class="cs-prefix-code">${escapeHtml(group.rows[0]?.visibleCases.length === 1 ? '1' : `${group.low}+`)}</span><span class="cs-prefix-count">${nf.format(group.rows.length)} ${noun} | ${matterLabel(totalMatters)}</span></summary>
+      <ul class="cs-results">${group.rows.map((row) => renderEntityRow(kind, row)).join('')}</ul>
+    </details>`;
+  }).join('');
+}
+
+function quotedQueryValue(value) {
+  return text(value).replace(/"/g, ' ');
+}
+
+function renderEntityRow(kind, entity) {
+  const isParty = kind === 'parties';
+  const query = `${isParty ? 'party' : 'counsel'}:"${quotedQueryValue(entity.displayName)}"`;
+  const right = isParty
+    ? [
+      entity.roles.slice(0, 2).join(', '),
+      entity.attorneys.length ? `counsel ${entity.attorneys.slice(0, 2).join(', ')}` : '',
+      `${nf.format(entity.rowCount)} rows`,
+    ]
+    : [
+      entity.barNumbers.length ? `bar ${entity.barNumbers.slice(0, 2).join(', ')}` : '',
+      entity.represented.length ? `represents ${entity.represented.slice(0, 2).join(', ')}` : '',
+      `${nf.format(entity.rowCount)} rows`,
+    ];
+  return `<li>
+    <a class="cs-case-row-link" href="#cases" data-entity-search="${escapeHtml(query)}" data-entity-kind="${escapeHtml(kind)}" data-entity-key="${escapeHtml(entity.key)}" title="Show matching cases">
+      <span class="cs-case-state"><span class="${isParty ? 'cs-case-state-ring' : 'cs-case-state-check'}"></span></span>
+      <span class="cs-r-title">${escapeHtml(matterLabel(entity.visibleCases.length))}</span>
+      <span class="cs-r-title-name">${escapeHtml(entity.displayName || '(unnamed)')}</span>
+      <span class="cs-r-meta">${escapeHtml(right.map(text).filter(Boolean).join(' | '))}</span>
+    </a>
+  </li>`;
 }
 
 function renderCaseGroups(rows) {
@@ -651,30 +969,25 @@ function renderCaseRow(row) {
   const caseNumber = text(row.case_number);
   const displayNumber = text(row.display_case_number || row.case_number);
   const hearing = row.next_hearing;
-  const snippetParts = [
-    row.cause_of_action,
+  const filed = displayDate(row.filed_date || row.filing_date);
+  const metaParts = [
+    filed ? `filed ${filed}` : '',
+    row.cause_of_action ? `nature ${row.cause_of_action}` : '',
     row.status,
+    row.case_type,
+    row.location_code,
     num(row.docket_entry_count) ? `${nf.format(num(row.docket_entry_count))} docket` : '',
     num(row.party_count) ? `${nf.format(num(row.party_count))} parties` : '',
+    num(row.attorney_count) ? `${nf.format(num(row.attorney_count))} counsel` : '',
+    hearing ? `next ${compactDateTime(hearing.court_date, hearing.hearing_time)}` : '',
     row.has_deferred_documents ? 'document rows deferred' : '',
   ].map(text).filter(Boolean);
-  const metaParts = [
-    displayDate(row.filed_date || row.filing_date) ? `filed ${displayDate(row.filed_date || row.filing_date)}` : '',
-    row.portal_node_id ? `node ${row.portal_node_id}` : '',
-    hearing ? `next ${compactDateTime(hearing.court_date, hearing.hearing_time)}` : '',
-  ].filter(Boolean);
   const selected = caseNumber === state.selectedCaseNumber ? ' is-selected' : '';
   return `<li class="${selected.trim()}">
     <a class="cs-case-row-link" href="#case=${encodeURIComponent(caseNumber)}" data-case-open="${escapeHtml(caseNumber)}">
       <span class="cs-case-state"><span class="${rowStateClass(row)}"></span></span>
-      <span>
-        <span class="cs-r-title">${escapeHtml(displayNumber)}</span>
-        <span class="cs-r-title-name">${escapeHtml([row.case_type, row.location_code].filter(Boolean).join(' / '))}</span>
-      </span>
-      <span>
-        <span class="cs-r-sub">${escapeHtml(row.case_title || '(untitled)')}</span>
-        <span class="cs-r-snippet">${escapeHtml(snippetParts.join(' | '))}</span>
-      </span>
+      <span class="cs-r-title">${escapeHtml(displayNumber)}</span>
+      <span class="cs-r-title-name">${escapeHtml(row.case_title || '(untitled)')}</span>
       <span class="cs-r-meta">${escapeHtml(metaParts.join(' | '))}</span>
     </a>
   </li>`;
