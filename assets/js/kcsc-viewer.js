@@ -30,6 +30,8 @@ const state = {
   caseByNumber: new Map(),
   partyEntities: [],
   counselEntities: [],
+  entitiesLoaded: false,
+  entitiesPromise: null,
   nextHearings: new Map(),
   docketIndex: new Map(),
   partyIndex: new Map(),
@@ -38,6 +40,7 @@ const state = {
   selectedCase: null,
   selectedTab: 'summary',
   detailCache: new Map(),
+  caseGroupRows: new Map(),
   entityCaseFilter: null,
   scope: 'cases',
 };
@@ -113,11 +116,16 @@ function tableRowsCount(name) {
   return num(state.manifest?.tables?.[name]?.rows);
 }
 
-function tableRowsCountText(name) {
-  return nf.format(tableRowsCount(name));
+function archiveCountText() {
+  return nf.format(num(state.manifest?.archive?.cases || tableRowsCount('cases') || state.cases.length));
+}
+
+function archiveReadyText() {
+  return `${archiveCountText()} captured dockets`;
 }
 
 function caseLocation(row) {
+  if (row?.location_code) return text(row.location_code);
   const numText = text(row.display_case_number || row.case_number);
   const match = numText.match(/(SEA|KNT)$/i);
   return match ? match[1].toUpperCase() : '';
@@ -137,14 +145,18 @@ function rowKcsc(row) {
 }
 
 function casePortalNode(row) {
+  if (row?.portal_node_id) return text(row.portal_node_id);
   return text(rowKcsc(row).portal_node_id || safeJson(row.raw)?.raw?.case?.portalNodeId);
 }
 
 function casePortalId(row) {
+  if (row?.portal_case_id) return text(row.portal_case_id);
   return text(rowKcsc(row).portal_case_id || safeJson(row.raw)?.raw?.case?.portalCaseId);
 }
 
-function caseHasDeferredDocuments(row) {
+function caseHasDocumentIndexRows(row) {
+  if (num(row?.document_count)) return true;
+  if (row?.has_document_index_rows != null) return Boolean(row.has_document_index_rows);
   const kcsc = rowKcsc(row);
   return Array.isArray(kcsc.document_rows_deferred) && kcsc.document_rows_deferred.length > 0;
 }
@@ -161,6 +173,13 @@ async function fetchJsonFrom(base, path) {
   return { json: await res.json(), url };
 }
 
+async function fetchTextFrom(base, path) {
+  const url = new URL(path, new URL(base, location.href)).href;
+  const res = await fetch(url, { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return { text: await res.text(), url };
+}
+
 async function resolveDataBase() {
   const params = new URLSearchParams(location.search);
   const requested = normalizeBase(params.get('dataBase'));
@@ -173,9 +192,6 @@ async function resolveDataBase() {
       const got = await fetchJsonFrom(base, 'data/manifest.json');
       state.dataBase = normalizeBase(base);
       state.manifest = got.json;
-      const sourceLabel = state.dataBase === REMOTE_DATA_BASE ? 'aimesy/kcsc-data@master' : state.dataBase;
-      const generated = state.manifest.generated_at ? `generated ${state.manifest.generated_at}` : 'manifest loaded';
-      $('cs-entity-meta').textContent = `${sourceLabel} | ${generated}`;
       return;
     } catch (err) {
       errors.push(`${base}: ${err.message || err}`);
@@ -229,6 +245,21 @@ function rowsFromArrow(table) {
 async function loadTableRows(tableName, query) {
   const table = await state.conn.query(query || `SELECT * FROM ${tableName}`);
   return rowsFromArrow(table);
+}
+
+async function loadEntityParquetRows(entityTableName, parquetPath) {
+  await ensureDuckDB();
+  await registerParquet(entityTableName, parquetPath);
+  return loadTableRows(entityTableName);
+}
+
+async function loadCaseIndexRows() {
+  const path = state.manifest?.archive?.cases_index || 'archive/cases-index.ndjson';
+  const got = await fetchTextFrom(state.dataBase, path);
+  return got.text
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line));
 }
 
 function appendIndex(map, key, value) {
@@ -287,8 +318,8 @@ function enrichCases(caseRows) {
     location_code: caseLocation(row),
     portal_node_id: casePortalNode(row),
     portal_case_id: casePortalId(row),
-    has_deferred_documents: caseHasDeferredDocuments(row),
-    next_hearing: state.nextHearings.get(text(row.case_number)) || null,
+    has_document_index_rows: caseHasDocumentIndexRows(row),
+    next_hearing: row.next_hearing || state.nextHearings.get(text(row.case_number)) || null,
   }));
 }
 
@@ -415,33 +446,12 @@ function sortEntities(a, b) {
 async function loadData() {
   setStatus('loading data', 'reading manifest');
   await resolveDataBase();
-  setStatus('loading tables');
-  await ensureDuckDB();
-
-  const tables = state.manifest.tables || {};
-  const specs = [
-    ['cases', tables.cases?.path || 'data/cases.parquet'],
-    ['calendar', tables.calendar?.path || 'data/calendar.parquet'],
-    ['docket_entries', tables.docket_entries?.path || 'data/docket_entries.parquet'],
-    ['parties', tables.parties?.path || 'data/parties.parquet'],
-    ['attorneys', tables.attorneys?.path || 'data/attorneys.parquet'],
-  ];
-
-  for (const [tableName, path] of specs) {
-    setStatus(`loading ${tableName}`);
-    await registerParquet(tableName, path);
-  }
-
-  setStatus('indexing rows');
-  const caseRows = await loadTableRows('cases', 'SELECT * FROM cases ORDER BY filed_date DESC NULLS LAST, case_number');
-  state.calendarRows = await loadTableRows('calendar', `
-    SELECT * FROM calendar
-    WHERE court_date IS NOT NULL AND court_date <> ''
-    ORDER BY court_date ASC, hearing_time ASC NULLS LAST
-  `);
-  state.docketRows = await loadTableRows('docket_entries', 'SELECT * FROM docket_entries ORDER BY case_number, date_filed, entry_seq');
-  state.partyRows = await loadTableRows('parties', 'SELECT * FROM parties ORDER BY case_number, party_seq');
-  state.attorneyRows = await loadTableRows('attorneys', 'SELECT * FROM attorneys ORDER BY case_number, name');
+  setStatus('loading index', 'reading case archive index');
+  const caseRows = await loadCaseIndexRows();
+  state.calendarRows = [];
+  state.docketRows = [];
+  state.partyRows = [];
+  state.attorneyRows = [];
 
   buildSearchIndexes();
   state.cases = enrichCases(caseRows);
@@ -457,13 +467,32 @@ async function loadData() {
   } else {
     renderResults();
   }
-  setStatus('loaded', sourceSummary());
+  setStatus('loaded', archiveReadyText());
 }
 
-function sourceSummary() {
-  const sourceLabel = state.dataBase === REMOTE_DATA_BASE ? 'aimesy/kcsc-data@master' : state.dataBase;
-  const generated = state.manifest?.generated_at ? `generated ${state.manifest.generated_at}` : 'manifest loaded';
-  return `${sourceLabel} | ${generated}`;
+async function ensureEntityData() {
+  if (state.entitiesLoaded) return;
+  if (state.entitiesPromise) return state.entitiesPromise;
+  state.entitiesPromise = (async () => {
+    const tables = state.manifest?.tables || {};
+    setStatus('loading entities', 'loading party and counsel indexes');
+    if (tables.parties?.path) state.partyRows = await loadEntityParquetRows('parties', tables.parties.path);
+    if (tables.attorneys?.path) state.attorneyRows = await loadEntityParquetRows('attorneys', tables.attorneys.path);
+    buildSearchIndexes();
+    state.partyEntities = buildPartyEntities();
+    state.counselEntities = buildCounselEntities();
+    state.entitiesLoaded = true;
+    setStatus('loaded', archiveReadyText());
+  })().catch((err) => {
+    state.entitiesPromise = null;
+    setStatus('entity load error');
+    throw err;
+  });
+  return state.entitiesPromise;
+}
+
+function provenanceDataSource() {
+  return state.dataBase === REMOTE_DATA_BASE ? 'aimesy/kcsc-data@master' : state.dataBase;
 }
 
 function optionList(values, allLabel) {
@@ -491,10 +520,10 @@ function scopeLabel(scope = state.scope) {
 
 function scopePlaceholder(scope = state.scope) {
   return {
-    cases: 'Search title, party, counsel, docket text, case number, or namespaces',
-    parties: 'Search party names, roles, counsel, case numbers, or namespaces',
-    counsel: 'Search counsel names, bar numbers, represented parties, case numbers, or namespaces',
-  }[scope] || 'Search title, party, counsel, docket text, case number, or namespaces';
+    cases: 'Search title, cause, status, node, case number, or namespaces',
+    parties: 'Search party names, roles, counsel, address, or case number',
+    counsel: 'Search counsel names, bar numbers, represented parties, or case number',
+  }[scope] || 'Search title, cause, status, node, case number, or namespaces';
 }
 
 function applyScopeUi(scope = state.scope) {
@@ -551,12 +580,21 @@ function bindEvents() {
   });
 
   document.querySelectorAll('input[name="cs-scope"]').forEach((radio) => {
-    radio.addEventListener('change', () => {
+    radio.addEventListener('change', async () => {
       state.scope = radio.value;
       clearEntityCaseFilter();
       applyScopeUi(state.scope);
       $('cs-scope-menu').classList.remove('open');
       $('cs-scope-btn').setAttribute('aria-expanded', 'false');
+      if (state.scope === 'parties' || state.scope === 'counsel') {
+        $('cs-body').innerHTML = '<div class="cs-loading">Loading party and counsel indexes.</div>';
+        try {
+          await ensureEntityData();
+        } catch (err) {
+          $('cs-body').innerHTML = `<div class="cs-error">${escapeHtml(err.message || String(err))}</div>`;
+          return;
+        }
+      }
       renderResults();
     });
   });
@@ -608,6 +646,10 @@ function bindEvents() {
       renderResults();
     }
   });
+
+  document.addEventListener('toggle', (event) => {
+    hydrateCaseYearGroup(event.target);
+  }, true);
 
   window.addEventListener('popstate', async () => {
     const requested = requestedCaseFromLocation();
@@ -729,7 +771,7 @@ function caseMatchesFilters(row, filters, includeFreeText = true) {
   if (filters.content === 'hearing' && !num(row.calendar_count)) return false;
   if (filters.content === 'party' && !num(row.party_count)) return false;
   if (filters.content === 'counsel' && !num(row.attorney_count)) return false;
-  if (filters.content === 'document' && !row.has_deferred_documents) return false;
+  if (filters.content === 'document' && !row.has_document_index_rows) return false;
   return true;
 }
 
@@ -804,15 +846,16 @@ function activeChips() {
   return chips;
 }
 
-function renderMetricsHtml() {
-  return `<div class="cs-metrics" aria-label="Corpus totals">
-    <div class="cs-metric"><b>${tableRowsCountText('cases')}</b><span>Cases</span></div>
-    <div class="cs-metric"><b>${tableRowsCountText('docket_entries')}</b><span>Docket rows</span></div>
-    <div class="cs-metric"><b>${tableRowsCountText('parties')}</b><span>Parties</span></div>
-    <div class="cs-metric"><b>${tableRowsCountText('attorneys')}</b><span>Counsel</span></div>
-    <div class="cs-metric"><b>${tableRowsCountText('calendar')}</b><span>Hearings</span></div>
-    <div class="cs-metric"><b>${nf.format(state.cases.filter((row) => row.has_deferred_documents).length)}</b><span>Deferred docs</span></div>
-  </div>`;
+function caseStateLegendHtml() {
+  const items = [
+    ['cs-case-state-dot', 'index only'],
+    ['cs-case-state-ring', 'docket/hearing rows'],
+    ['cs-case-state-partial', 'party/counsel rows'],
+    ['cs-case-state-check', 'case rows + people'],
+  ];
+  return `<span class="cs-case-legend" aria-label="Case row legend">${items.map(([className, label]) => (
+    `<span class="cs-case-legend-item"><span class="cs-case-state mini"><span class="${className}"></span></span>${escapeHtml(label)}</span>`
+  )).join('')}</span>`;
 }
 
 function renderResults() {
@@ -830,14 +873,14 @@ function renderResults() {
 function renderCaseResults() {
   $('cs-kicker').textContent = 'Cases';
   $('cs-entity-title').textContent = 'King County Superior Court';
-  $('cs-entity-meta').textContent = sourceSummary();
+  $('cs-entity-meta').textContent = archiveReadyText();
 
   const rows = filteredCases();
   const chips = activeChips();
   const chipHtml = chips.map((chip) => `<span class="cs-badge cs-src">${escapeHtml(chip)}</span>`).join('');
-  const count = `<p class="cs-count"><strong>${nf.format(rows.length)} case${rows.length === 1 ? '' : 's'}</strong><span>${nf.format(state.cases.length)} loaded</span>${chipHtml}</p>`;
+  const count = `<p class="cs-count"><strong>${nf.format(rows.length)} case${rows.length === 1 ? '' : 's'}</strong><span>${nf.format(state.cases.length)} indexed</span><span>detail rows load per case</span>${chipHtml}${caseStateLegendHtml()}</p>`;
   const body = rows.length ? renderCaseGroups(rows) : '<div class="cs-empty">No matching cases.</div>';
-  $('cs-body').innerHTML = `${count}${renderMetricsHtml()}${body}`;
+  $('cs-body').innerHTML = `${count}${body}`;
 }
 
 function renderEntityResults(kind) {
@@ -935,23 +978,31 @@ function renderEntityRow(kind, entity) {
 }
 
 function renderCaseGroups(rows) {
+  state.caseGroupRows = new Map();
+  let groupSeq = 0;
   const byType = grouped(rows, (row) => row.case_type || 'unknown');
+  const openTypes = rows.length <= 15000 || byType.size <= 5;
   return sortedEntries(byType).map(([type, typeRows]) => {
     const byLocation = grouped(typeRows, (row) => row.location_code || 'No location');
+    const openLocations = rows.length <= 5000 || typeRows.length <= 1200;
     const locations = sortedEntries(byLocation).map(([location, locRows]) => {
       const byYear = grouped(locRows, (row) => yearFromDate(row.filed_date || row.filing_date));
-      const years = sortedEntries(byYear, 'year_desc').map(([year, yearRows]) => (
-        `<details class="cs-year-group" open>
+      const openYears = locRows.length <= 250;
+      const years = sortedEntries(byYear, 'year_desc').map(([year, yearRows]) => {
+        const groupKey = `g${groupSeq++}`;
+        const renderNow = openLocations && openYears;
+        state.caseGroupRows.set(groupKey, yearRows);
+        return `<details class="cs-year-group"${renderNow ? ' open' : ''}>
           <summary class="cs-year-head"><span class="cs-year-tag">${escapeHtml(year)}</span><span class="cs-year-count">${nf.format(yearRows.length)} cases</span></summary>
-          <ul class="cs-results">${yearRows.map(renderCaseRow).join('')}</ul>
-        </details>`
-      )).join('');
-      return `<details class="cs-prefix-group" open>
+          <ul class="cs-results" data-case-group-key="${escapeHtml(groupKey)}"${renderNow ? ' data-hydrated="1"' : ''}>${renderNow ? yearRows.map(renderCaseRow).join('') : ''}</ul>
+        </details>`;
+      }).join('');
+      return `<details class="cs-prefix-group"${openLocations ? ' open' : ''}>
         <summary class="cs-prefix-head"><span class="cs-prefix-code">${escapeHtml(location)}</span><span class="cs-prefix-count">${nf.format(locRows.length)} cases</span></summary>
         ${years}
       </details>`;
     }).join('');
-    return `<details class="cs-type-group" open>
+    return `<details class="cs-type-group"${openTypes ? ' open' : ''}>
       <summary class="cs-type-head"><span class="cs-type-tag">${escapeHtml(type.toUpperCase())}</span><span class="cs-type-count">${nf.format(typeRows.length)} cases</span></summary>
       ${locations}
     </details>`;
@@ -959,38 +1010,57 @@ function renderCaseGroups(rows) {
 }
 
 function rowStateClass(row) {
-  if (num(row.docket_entry_count) && num(row.party_count) && row.has_deferred_documents) return 'cs-case-state-check';
-  if (row.has_deferred_documents) return 'cs-case-state-partial';
-  if (num(row.docket_entry_count) || num(row.calendar_count)) return 'cs-case-state-ring';
+  const hasActions = num(row.docket_entry_count) || num(row.calendar_count);
+  const hasPeople = num(row.party_count) || num(row.attorney_count);
+  if (hasActions && hasPeople) return 'cs-case-state-check';
+  if (hasActions) return 'cs-case-state-ring';
+  if (hasPeople) return 'cs-case-state-partial';
   return 'cs-case-state-dot';
+}
+
+function caseField(label, value) {
+  const v = text(value);
+  if (!v) return '';
+  return `<span class="cs-case-field"><span>${escapeHtml(label)}</span><b>${escapeHtml(v)}</b></span>`;
+}
+
+function renderCaseMetaFields(row) {
+  const hearing = row.next_hearing;
+  const filed = displayDate(row.filed_date || row.filing_date);
+  return [
+    caseField('Filed', filed),
+    caseField('Nature', row.cause_of_action),
+    caseField('Status', row.status),
+    caseField('Type', row.case_type),
+    caseField('Loc', row.location_code),
+    caseField('ROA', num(row.docket_entry_count) ? nf.format(num(row.docket_entry_count)) : ''),
+    caseField('Party', num(row.party_count) ? nf.format(num(row.party_count)) : ''),
+    caseField('Atty', num(row.attorney_count) ? nf.format(num(row.attorney_count)) : ''),
+    caseField('Next', hearing ? compactDateTime(hearing.court_date, hearing.hearing_time) : ''),
+  ].filter(Boolean).join('');
 }
 
 function renderCaseRow(row) {
   const caseNumber = text(row.case_number);
   const displayNumber = text(row.display_case_number || row.case_number);
-  const hearing = row.next_hearing;
-  const filed = displayDate(row.filed_date || row.filing_date);
-  const metaParts = [
-    filed ? `filed ${filed}` : '',
-    row.cause_of_action ? `nature ${row.cause_of_action}` : '',
-    row.status,
-    row.case_type,
-    row.location_code,
-    num(row.docket_entry_count) ? `${nf.format(num(row.docket_entry_count))} docket` : '',
-    num(row.party_count) ? `${nf.format(num(row.party_count))} parties` : '',
-    num(row.attorney_count) ? `${nf.format(num(row.attorney_count))} counsel` : '',
-    hearing ? `next ${compactDateTime(hearing.court_date, hearing.hearing_time)}` : '',
-    row.has_deferred_documents ? 'document rows deferred' : '',
-  ].map(text).filter(Boolean);
   const selected = caseNumber === state.selectedCaseNumber ? ' is-selected' : '';
   return `<li class="${selected.trim()}">
     <a class="cs-case-row-link" href="#case=${encodeURIComponent(caseNumber)}" data-case-open="${escapeHtml(caseNumber)}">
       <span class="cs-case-state"><span class="${rowStateClass(row)}"></span></span>
       <span class="cs-r-title">${escapeHtml(displayNumber)}</span>
       <span class="cs-r-title-name">${escapeHtml(row.case_title || '(untitled)')}</span>
-      <span class="cs-r-meta">${escapeHtml(metaParts.join(' | '))}</span>
+      <span class="cs-r-meta cs-case-fields">${renderCaseMetaFields(row)}</span>
     </a>
   </li>`;
+}
+
+function hydrateCaseYearGroup(details) {
+  if (!details?.classList?.contains('cs-year-group') || !details.open) return;
+  const list = details.querySelector('.cs-results[data-case-group-key]');
+  if (!list || list.dataset.hydrated) return;
+  const rows = state.caseGroupRows.get(list.dataset.caseGroupKey) || [];
+  list.innerHTML = rows.map(renderCaseRow).join('');
+  list.dataset.hydrated = '1';
 }
 
 function findCase(caseNumber) {
@@ -1090,8 +1160,6 @@ function renderDetail() {
       <div class="cs-action-row">
         <button class="hbtn" type="button" data-results-back>Back to results</button>
         ${sourceLink}
-        <span class="cs-badge cs-src">KCSC normalized JSON</span>
-        ${record.documents_deferred ? '<span class="cs-badge cs-warn">document bytes deferred</span>' : ''}
       </div>
     </header>
     ${renderTabContent(record)}
@@ -1108,7 +1176,7 @@ function renderTabContent(record) {
     charges: () => renderSourceRows(record.kcsc?.charge_rows || [], 'No charge rows.'),
     judgments: () => renderSourceRows(record.kcsc?.judgment_rows || [], 'No judgment rows.'),
     documents: () => renderDocuments(record.kcsc?.document_rows_deferred || []),
-    provenance: () => renderProvenance(record.kcsc?.raw_tab_summaries || []),
+    provenance: () => renderProvenance(record.kcsc?.raw_tab_summaries || [], record),
     raw: () => renderRaw(record),
   };
   return (renderers[state.selectedTab] || renderers.summary)(record);
@@ -1147,13 +1215,11 @@ function renderSummary(record) {
     { label: 'Docket', value: `${record.docket_entries?.length || 0} rows` },
     { label: 'Parties', value: `${record.parties?.length || 0} parties` },
     { label: 'Counsel', value: `${record.attorneys?.length || 0} attorneys` },
-    { label: 'Documents', value: record.documents_deferred ? `${kcsc.document_rows_deferred?.length || 0} deferred` : `${record.documents?.length || 0}` },
   ]);
 
   const summaryRows = [
     `<span class="cs-field-lead">Cause:</span> ${valueOrEmpty(record.cause_of_action)}`,
     `<span class="cs-field-lead">Next hearing:</span> ${next ? escapeHtml(`${compactDateTime(next.court_date, next.hearing_time)} ${text(next.hearing_type)}`) : '<span class="cs-badge cs-na">none indexed</span>'}`,
-    `<span class="cs-field-lead">Document capture:</span> ${escapeHtml(record.document_unavailable_reason || kcsc.document_byte_capture || 'not specified')}`,
   ];
 
   const portalRows = renderKv([
@@ -1162,7 +1228,6 @@ function renderSummary(record) {
     ['Portal case type', kcsc.case_type_text || kcsc.case_type_key],
     ['Captured', record.captured_at],
     ['Updated', record.updated_at],
-    ['Source', record.source],
   ]);
 
   return `<div class="cs-overview-grid">
@@ -1174,7 +1239,7 @@ function renderSummary(record) {
           <div>${escapeHtml(record.case_title || '(untitled)')}</div>
         </div>
       </section>
-      ${renderSection('KCSC posture', summaryRows)}
+      ${renderSection('Case overview', summaryRows)}
     </div>
     <div class="cs-pane">
       <section class="cs-section">
@@ -1310,29 +1375,116 @@ function renderSourceRows(rows, emptyText, options = {}) {
   </section>`;
 }
 
+function rawLineColumns(row) {
+  const headers = Array.isArray(row.rawHeaders) ? row.rawHeaders.map(text) : [];
+  const rawLine = row.rawLine == null ? '' : String(row.rawLine);
+  if (!headers.length || !rawLine) return null;
+  const cells = rawLine.split('\t').map(text);
+  while (cells.length && !cells[0]) cells.shift();
+  while (cells.length > headers.length && !cells[cells.length - 1]) cells.pop();
+  if (cells.length < 3) return null;
+  const out = {};
+  headers.forEach((header, index) => {
+    const key = header.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const value = cells[index] || '';
+    if (key === 'subnumber') out.subNumber = value;
+    else if (key === 'datefiled') out.dateFiled = value;
+    else if (key === 'documentname') out.documentName = value;
+    else if (key === 'additionalinformation') out.additionalInformation = value;
+    else if (key === 'filedby') out.filedBy = value;
+    else if (key === 'page' || key === 'pagenumber') out.pageCount = value;
+    else if (key === 'seal') out.seal = value;
+  });
+  return out;
+}
+
+function looksPageCount(value) {
+  return /^\d{1,4}$/.test(text(value));
+}
+
+function looksFilingParty(value) {
+  return /^(?:petitioner|respondent|plaintiff|defendant|state|clerk|prosecutor|guardian|minor|appellant|appellee|executor|administrator|personal representative)\b/i.test(text(value));
+}
+
+function documentDisplayRow(row) {
+  const parsed = rawLineColumns(row);
+  let additional = parsed ? text(parsed.additionalInformation) : text(row.additionalInformation);
+  let filedBy = parsed ? text(parsed.filedBy) : text(row.filedBy);
+  let pageCount = parsed ? text(parsed.pageCount) : text(row.pageCount || row.pageNumber || row.pages);
+
+  if (!parsed && looksPageCount(filedBy)) {
+    if (!pageCount) pageCount = filedBy;
+    filedBy = '';
+    if (looksFilingParty(additional)) {
+      filedBy = additional;
+      additional = '';
+    }
+  }
+  if (!parsed && !pageCount && looksPageCount(additional)) {
+    pageCount = additional;
+    additional = '';
+  }
+
+  return {
+    subNumber: text(parsed?.subNumber || row.subNumber),
+    dateFiled: text(parsed?.dateFiled || row.dateFiled),
+    documentName: text(parsed?.documentName || row.documentName || '(document row)'),
+    additionalInformation: additional,
+    filedBy,
+    pageCount,
+    seal: text(parsed?.seal || row.seal),
+  };
+}
+
 function renderDocuments(rows) {
-  if (!rows.length) return '<div class="cs-empty">No deferred document rows.</div>';
+  if (!rows.length) return '<div class="cs-empty">No document index rows.</div>';
   return `<section class="cs-section">
-    <h3>Deferred document rows</h3>
+    <h3>Document index</h3>
     <div class="cs-record-table-wrap">
-      <table class="cs-record-table">
+      <table class="cs-record-table cs-document-table">
         <thead><tr><th>Sub</th><th>Date</th><th>Document</th><th>Additional</th><th>Filed by</th><th>Pages</th></tr></thead>
-        <tbody>${rows.map((row) => `<tr>
-          <td class="cs-mono">${escapeHtml(row.subNumber || '')}</td>
-          <td class="cs-mono">${escapeHtml(displayDate(row.dateFiled))}</td>
-          <td>${escapeHtml(row.documentName || '(document row)')} <span class="cs-badge cs-warn">bytes deferred</span></td>
-          <td>${escapeHtml(row.additionalInformation || '')}</td>
-          <td class="cs-mono">${escapeHtml(row.filedBy || '')}</td>
-          <td class="cs-mono">${escapeHtml(row.pageNumber || row.pages || '')}</td>
-        </tr>`).join('')}</tbody>
+        <tbody>${rows.map((row) => {
+          const doc = documentDisplayRow(row);
+          return `<tr>
+          <td class="cs-mono">${escapeHtml(doc.subNumber)}</td>
+          <td class="cs-mono">${escapeHtml(displayDate(doc.dateFiled))}</td>
+          <td>${escapeHtml(doc.documentName)}</td>
+          <td>${escapeHtml(doc.additionalInformation)}</td>
+          <td>${escapeHtml(doc.filedBy)}</td>
+          <td class="cs-mono">${escapeHtml(doc.pageCount)}</td>
+        </tr>`;
+        }).join('')}</tbody>
       </table>
     </div>
   </section>`;
 }
 
-function renderProvenance(rows) {
-  if (!rows.length) return '<div class="cs-empty">No provenance rows.</div>';
-  return `<section class="cs-section">
+function documentIndexRows(record = {}) {
+  return record.kcsc?.document_rows_deferred || [];
+}
+
+function documentByteStatus(record = {}, rows = []) {
+  const rawStatus = text(record.document_unavailable_reason || record.kcsc?.document_byte_capture);
+  if (!rows.length && !record.documents_deferred && !rawStatus) return '';
+  if (!rawStatus || /deferred/i.test(rawStatus)) return 'not captured; index rows only';
+  return rawStatus;
+}
+
+function renderProvenance(rows, record = {}) {
+  const documentRows = documentIndexRows(record);
+  const documentCapture = documentByteStatus(record, documentRows);
+  const overview = renderKv([
+    ['Canonical', 'KCSC normalized JSON'],
+    ['Data source', provenanceDataSource()],
+    ['Generated', state.manifest?.generated_at],
+    ['Source', record.source],
+    ['Source URL', record.source_url],
+    ['Captured', record.captured_at],
+    ['Updated', record.updated_at],
+    ['Document byte capture', documentCapture],
+    ['Document index rows', documentRows.length ? `${documentRows.length} rows` : ''],
+  ]);
+  const tabRows = rows.length ? `<section class="cs-section">
     <h3>KCSC tab captures</h3>
     <div class="cs-record-table-wrap">
       <table class="cs-record-table">
@@ -1347,7 +1499,16 @@ function renderProvenance(rows) {
         </tr>`).join('')}</tbody>
       </table>
     </div>
-  </section>`;
+  </section>` : '<div class="cs-empty">No provenance rows.</div>';
+  return `<div class="cs-overview-grid">
+    <div class="cs-pane">
+      <section class="cs-section">
+        <h3>Provenance</h3>
+        ${overview}
+      </section>
+    </div>
+    <div class="cs-pane">${tabRows}</div>
+  </div>`;
 }
 
 function renderRaw(record) {

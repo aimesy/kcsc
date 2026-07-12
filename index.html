@@ -401,37 +401,6 @@
       font-size: 0.68rem;
     }
     .cs-count strong { color: var(--ink); }
-    .cs-metrics {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      border-bottom: 1px solid var(--rule);
-      background: var(--paper-2);
-    }
-    .cs-metric {
-      min-width: 0;
-      padding: 0.46rem 0.65rem;
-      border-right: 1px solid var(--rule);
-      font-family: var(--font-mono);
-    }
-    .cs-metric:last-child { border-right: 0; }
-    .cs-metric b {
-      display: block;
-      color: var(--ink);
-      font-size: 0.86rem;
-      line-height: 1.1;
-      font-variant-numeric: tabular-nums;
-    }
-    .cs-metric span {
-      display: block;
-      margin-top: 0.16rem;
-      color: var(--ink-3);
-      font-size: 0.58rem;
-      text-transform: uppercase;
-      letter-spacing: 0.045em;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
     .cs-type-group { border-top: 1px solid var(--rule); }
     .cs-type-group > summary.cs-type-head,
     .cs-prefix-group > summary.cs-prefix-head,
@@ -528,7 +497,7 @@
       color: inherit;
       display: grid;
       gap: 0.55rem;
-      grid-template-columns: 16px minmax(8.8rem, 0.2fr) minmax(0, 1fr) minmax(18rem, 0.42fr);
+      grid-template-columns: 16px minmax(8.8rem, 0.22fr) minmax(0, 1fr) minmax(18rem, 0.5fr);
       min-width: 0;
       padding: 0.34rem 0.8rem;
       text-decoration: none;
@@ -543,6 +512,22 @@
       border: 1px solid color-mix(in srgb, var(--ink-3) 42%, transparent);
       color: var(--ink-3);
       line-height: 1;
+    }
+    .cs-case-state.mini {
+      width: 12px;
+      height: 12px;
+      transform: translateY(1px);
+    }
+    .cs-case-state.mini .cs-case-state-dot,
+    .cs-case-state.mini .cs-case-state-ring,
+    .cs-case-state.mini .cs-case-state-partial,
+    .cs-case-state.mini .cs-case-state-check {
+      width: 8px;
+      height: 8px;
+    }
+    .cs-case-state.mini .cs-case-state-check::after {
+      left: 2px;
+      top: 0;
     }
     .cs-case-state-dot,
     .cs-case-state-ring,
@@ -622,9 +607,56 @@
       font-size: 0.66rem;
       line-height: 1.2;
       text-align: right;
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+      overflow-wrap: anywhere;
+    }
+    .cs-case-fields {
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 0.12rem 0.42rem;
+      text-align: left;
+    }
+    .cs-case-field {
+      display: inline-grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: baseline;
+      gap: 0.22rem;
+      max-width: 100%;
+      min-width: 0;
+    }
+    .cs-case-field span {
+      color: var(--ink-3);
+      font-size: 0.56rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
       white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+    }
+    .cs-case-field b {
+      color: var(--ink-2);
+      font-weight: 500;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .cs-case-legend {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.42rem;
+      margin-left: 0.3rem;
+      color: var(--ink-3);
+      font-family: var(--font-mono);
+      font-size: 0.64rem;
+    }
+    .cs-case-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.24rem;
+      white-space: nowrap;
     }
     .cs-badge {
       display: inline-block;
@@ -860,15 +892,24 @@
       font-family: var(--font-mono);
       font-size: 0.64rem;
     }
+    @media (max-width: 1180px) {
+      .cs-case-row-link {
+        grid-template-columns: 16px minmax(8.2rem, 0.28fr) minmax(0, 1fr);
+      }
+      .cs-r-meta {
+        grid-column: 2 / -1;
+        text-align: left;
+      }
+      .cs-case-fields { justify-content: flex-start; }
+    }
     @media (max-width: 980px) {
       .cs-filter-rows { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
       .cs-overview-grid { grid-template-columns: 1fr; }
       .cs-overview-grid > .cs-pane:first-child { border-right: 0; }
       .cs-case-row-link {
-        grid-template-columns: 16px minmax(7.8rem, 0.24fr) minmax(0, 1fr) minmax(13rem, 0.34fr);
+        grid-template-columns: 16px minmax(7.8rem, 0.3fr) minmax(0, 1fr);
       }
       .cs-dossier-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .cs-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
     @media (max-width: 720px) {
       .cs-panel { height: auto; min-height: 100vh; overflow: visible; }
@@ -892,7 +933,6 @@
       }
       .cs-filter-rows { grid-template-columns: 1fr; }
       .cs-filter-row { grid-template-columns: 1fr; }
-      .cs-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .cs-case-row-link {
         grid-template-columns: 16px minmax(0, 1fr);
         gap: 0.2rem 0.55rem;
@@ -903,10 +943,11 @@
         text-align: left;
         padding-left: 0;
       }
+      .cs-case-fields { justify-content: flex-start; }
       .cs-dossier-ledger { grid-template-columns: 1fr; }
       .cs-kv-grid { grid-template-columns: 1fr; }
-      .cs-record-table th:nth-child(n+4),
-      .cs-record-table td:nth-child(n+4) { display: none; }
+      .cs-record-table:not(.cs-document-table) th:nth-child(n+4),
+      .cs-record-table:not(.cs-document-table) td:nth-child(n+4) { display: none; }
     }
   </style>
 </head>
@@ -945,7 +986,7 @@
         <div class="cs-identity">
           <span class="cs-kicker" id="cs-kicker">Cases</span>
           <h2 id="cs-entity-title">King County Superior Court</h2>
-          <span class="cs-entity-meta" id="cs-entity-meta">data source pending</span>
+          <span class="cs-entity-meta" id="cs-entity-meta">case archive</span>
         </div>
         <div class="cs-searchwrap">
           <div class="cs-scope-wrap">
@@ -958,7 +999,7 @@
               <label><input type="radio" name="cs-scope" value="counsel"> Counsel</label>
             </div>
           </div>
-          <input type="search" class="cs-search" id="cs-search" placeholder="Search title, party, counsel, docket text, case number, or namespaces" autocomplete="off">
+          <input type="search" class="cs-search" id="cs-search" placeholder="Search title, cause, status, node, case number, or namespaces" autocomplete="off">
         </div>
         <button type="button" class="hbtn" id="cs-filter-btn" title="Advanced KCSC filters">Advanced</button>
         <button type="button" class="hbtn" id="cs-reset-btn" title="Clear search and filters">Reset</button>
@@ -990,11 +1031,11 @@
               <option value="hearing">Has hearings</option>
               <option value="party">Has parties</option>
               <option value="counsel">Has counsel</option>
-              <option value="document">Has deferred document rows</option>
+              <option value="document">Has document index rows</option>
             </select>
           </div>
         </div>
-        <div class="cs-filter-note">Cases search scans case metadata, parties, counsel, and docket text. Parties and Counsel browse normalized entity rows; selecting an entity searches its matching cases. Namespaces supported in the search box: <code>case:</code> <code>title:</code> <code>party:</code> <code>counsel:</code> <code>docket:</code> <code>cause:</code> <code>status:</code> <code>node:</code> <code>from:</code> and <code>to:</code>.</div>
+        <div class="cs-filter-note">Cases search scans the lightweight archive index; full docket, party, counsel, and raw source rows load when a case is opened. Namespaces supported in the search box: <code>case:</code> <code>title:</code> <code>cause:</code> <code>status:</code> <code>node:</code> <code>from:</code> and <code>to:</code>.</div>
       </div>
       <div class="cs-tabstrip" id="cs-tabstrip" role="tablist" hidden></div>
     </div>
@@ -1002,6 +1043,6 @@
       <div class="cs-hint">Loading archived dockets...</div>
     </div>
   </div>
-  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260708-sfsc-entity-scopes-1"></script>
+  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260712-cleanup-1"></script>
 </body>
 </html>

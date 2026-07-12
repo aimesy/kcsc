@@ -31,12 +31,16 @@ assert(index.includes('value="parties"') && index.includes('value="counsel"'), '
 assert(app.includes("raw.githubusercontent.com/aimesy/kcsc-data/master"), 'viewer is not wired to kcsc-data');
 assert(app.includes("setAttribute('aria-expanded'"), 'scope button must update aria-expanded');
 assert(app.includes('data/manifest.json'), 'data manifest load is missing');
-assert(app.includes('data/cases.parquet'), 'case table load is missing');
-assert(app.includes('data/docket_entries.parquet'), 'docket table load is missing');
-assert(app.includes('data/parties.parquet'), 'party table load is missing');
-assert(app.includes('data/attorneys.parquet'), 'attorney table load is missing');
-assert(app.includes('data/calendar.parquet'), 'calendar table load is missing');
+assert(app.includes("state.manifest?.archive?.cases_index || 'archive/cases-index.ndjson'"), 'case index load is missing');
+assert(app.includes('loadCaseIndexRows'), 'case index startup loader is missing');
+assert(!app.includes("await registerParquet(tableName, path)"), 'viewer must not materialize all parquet tables at startup');
 assert(app.includes('archive/cases/${encodeURIComponent(canonical)}.json'), 'lazy per-case JSON load is missing');
+assert(!app.includes('globalTextSearch'), 'dead global text search flag must not remain');
+assert(!app.includes('has_deferred_documents'), 'viewer must not expose stale deferred document naming');
+assert(!app.includes('document bytes deferred'), 'viewer must not surface stale deferred document wording');
+assert(app.includes('has_document_index_rows'), 'document index row flag is missing');
+assert(app.includes('Search party names, roles, counsel, address, or case number'), 'party search placeholder is stale');
+assert(app.includes('Search counsel names, bar numbers, represented parties, or case number'), 'counsel search placeholder is stale');
 
 if (!process.exitCode) {
   console.log(`viewer static contract ok (${root})`);
