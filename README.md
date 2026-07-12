@@ -8,12 +8,17 @@ canonical case JSON from `aimesy/kcsc-data`.
 Published site:
 
 ```text
+https://kcsc.amyc.us/
+```
+
+Fallback GitHub Pages URL:
+
+```text
 https://aimesy.github.io/kcsc/
 ```
 
-No `CNAME` is committed right now. `kcsc.amyc.us` should only be restored after
-Cloudflare has a DNS-only `CNAME` from `kcsc` to `aimesy.github.io`; otherwise
-GitHub Pages redirects the working site to a dead hostname.
+Cloudflare DNS must keep a DNS-only `CNAME` from `kcsc` to `aimesy.github.io`
+so GitHub Pages can issue and renew the custom-domain certificate.
 
 Local smoke test from `C:\Users\amita\Amybot\projects`:
 
