@@ -3,400 +3,974 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KCSC Case Viewer</title>
+  <title>KCSC Case Archive</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes/src/theme.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes/src/bug-report.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes/src/font-system.css">
   <script src="https://cdn.jsdelivr.net/gh/aimesy/themes/src/theme.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/gh/aimesy/themes/src/bug-report.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/gh/aimesy/themes/src/font-system.js" defer></script>
   <style>
     :root {
       color-scheme: light;
       --amyc-public-records-footer-z: 80;
       --paper: #f6f4ed;
       --paper-2: #ebe8de;
-      --panel: #ffffff;
+      --paper-3: #ded9cc;
+      --plain: #ffffff;
+      --plain-soft: #f9f7f0;
       --ink: #1f2328;
       --ink-2: #525a63;
       --ink-3: #77808a;
       --rule: #d5d0c4;
       --rule-2: #e5e1d7;
-      --accent: #255f85;
-      --accent-2: #2f7a58;
-      --warn: #a15c16;
+      --row-hover: #eef5f1;
+      --panel-shadow: rgba(20, 28, 36, 0.18);
+      --chrome: #1d2730;
+      --chrome-ink: #d9e0e5;
+      --chrome-rule: #33414d;
+      --chrome-accent: #9ed1b6;
+      --link: #255f85;
+      --ok: #2f7a58;
+      --warn: #9a620f;
       --danger: #a33a3a;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --warn-bg: #fff6dd;
+      --warn-border: #e8c36a;
+      --danger-bg: #fdecec;
+      --danger-border: #e7b5b5;
+      --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-serif: Georgia, "Times New Roman", serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     }
+
     * { box-sizing: border-box; }
     html, body { min-height: 100%; }
     body {
       margin: 0;
-      font-family: var(--sans);
-      color: var(--ink);
       background: var(--paper);
+      color: var(--ink);
+      font-family: var(--font-sans);
       letter-spacing: 0;
     }
-    button, input, select {
-      font: inherit;
-    }
-    button {
-      border: 1px solid var(--rule);
-      background: var(--panel);
+    button, input, select { font: inherit; }
+    button, a { touch-action: manipulation; }
+    a { color: var(--link); }
+    .cs-panel {
+      min-height: 100vh;
+      height: 100vh;
+      background: var(--paper);
       color: var(--ink);
-      min-height: 34px;
-      padding: 0 0.7rem;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      font-size: 0.78rem;
+    }
+    .cs-topbar {
+      flex: 0 0 auto;
+      display: block;
+      background: var(--paper);
+      color: var(--ink);
+      border-bottom: 1px solid var(--rule);
+    }
+    .cs-status-strip {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      min-height: 30px;
+      padding: 0.24rem 0.85rem;
+      background: var(--chrome);
+      color: var(--chrome-ink);
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--chrome-rule);
+    }
+    .cs-status-strip strong { color: var(--chrome-accent); }
+    .cs-status-strip .dot { color: color-mix(in srgb, var(--chrome-ink) 52%, transparent); }
+    .cs-status-strip .grow { flex: 1; }
+    .cs-status-strip button {
+      flex: 0 0 auto;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid var(--chrome-rule);
+      background: transparent;
+      color: var(--chrome-ink);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       cursor: pointer;
     }
-    button:hover { border-color: var(--accent); color: var(--accent); }
-    .shell {
-      min-height: 100vh;
-      display: grid;
-      grid-template-rows: auto auto 1fr;
+    .cs-status-strip button:hover {
+      border-color: var(--chrome-accent);
+      color: var(--chrome-accent);
     }
-    .topbar {
+    .bug-report-icon,
+    .theme-icon {
+      width: 17px;
+      height: 17px;
+      fill: none;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 1.7;
+    }
+    .cs-entity-bar {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-      padding: 1rem 1.25rem;
+      gap: 0.7rem;
+      flex-wrap: wrap;
+      padding: 0.5rem 0.85rem;
+      background: var(--paper-2);
       border-bottom: 1px solid var(--rule);
-      background: var(--panel);
     }
-    .brand {
+    .cs-identity {
+      min-width: 230px;
+      display: flex;
+      align-items: baseline;
+      gap: 0.55rem;
+      flex-wrap: wrap;
+    }
+    .cs-kicker {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      color: var(--ink-3);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .cs-topbar h2 {
+      margin: 0;
+      font-family: var(--font-serif);
+      font-size: 1.02rem;
+      line-height: 1.15;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .cs-entity-meta {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--ink-3);
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cs-searchwrap {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      flex: 1 1 340px;
+      min-width: 250px;
+      max-width: 720px;
+    }
+    .cs-scope-wrap {
+      position: relative;
+      display: flex;
+      flex: 0 0 auto;
+    }
+    .cs-scope-btn {
+      box-sizing: border-box;
+      height: 30px;
       display: flex;
       align-items: center;
-      gap: 0.85rem;
+      font: inherit;
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      cursor: pointer;
+      background: var(--paper);
+      color: var(--ink-2);
+      border: 1px solid var(--rule);
+      border-right: none;
+      border-radius: 2px 0 0 2px;
+      padding: 0.28rem 0.5rem;
+      white-space: nowrap;
+    }
+    .cs-scope-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      margin-top: 4px;
+      min-width: 170px;
+      z-index: 10;
+      padding: 4px;
+      background: var(--paper);
+      color: var(--ink);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      box-shadow: 0 8px 28px var(--panel-shadow);
+    }
+    .cs-scope-menu.open { display: block; }
+    .cs-scope-menu label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 6px;
+      border-radius: 2px;
+      cursor: pointer;
+      font-size: 0.76rem;
+    }
+    .cs-scope-menu label:hover { background: var(--paper-2); }
+    .cs-search {
+      box-sizing: border-box;
+      height: 30px;
+      flex: 1;
+      min-width: 0;
+      border: 1px solid var(--rule);
+      border-radius: 0 2px 2px 0;
+      padding: 0.28rem 0.5rem;
+      background: var(--paper);
+      color: var(--ink);
+      font: inherit;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+    }
+    .cs-search:focus,
+    .cs-filter-panel select:focus,
+    .cs-filter-panel input:focus {
+      outline: 2px solid color-mix(in srgb, var(--link) 34%, transparent);
+      border-color: var(--link);
+    }
+    .hbtn {
+      box-sizing: border-box;
+      min-height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.24rem;
+      padding: 0.22rem 0.55rem;
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      background: var(--paper);
+      color: var(--ink-2);
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      line-height: 1.15;
+      text-decoration: none;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .hbtn:hover,
+    .hbtn.active {
+      background: var(--plain);
+      color: var(--ink);
+      border-color: var(--ink-3);
+    }
+    .cs-data-source { color: var(--link); }
+    .cs-filter-panel {
+      display: grid;
+      gap: 0.45rem;
+      padding: 0.55rem 0.85rem;
+      border-bottom: 1px solid var(--rule);
+      background: var(--plain-soft);
+    }
+    .cs-filter-panel[hidden] { display: none; }
+    .cs-filter-head,
+    .cs-filter-rows,
+    .cs-filter-note {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      color: var(--ink-3);
+    }
+    .cs-filter-head {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+    }
+    .cs-filter-head label,
+    .cs-filter-row label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.28rem;
       min-width: 0;
     }
-    .mark {
-      width: 44px;
-      height: 44px;
-      display: grid;
-      place-items: center;
+    .cs-filter-head select,
+    .cs-filter-row select,
+    .cs-filter-row input {
+      height: 26px;
+      min-width: 0;
       border: 1px solid var(--rule);
-      background: linear-gradient(135deg, #ffffff 0%, #e8f0ec 100%);
-      color: var(--accent);
-      font-family: var(--mono);
-      font-size: 0.78rem;
-      font-weight: 700;
+      border-radius: 2px;
+      background: var(--paper);
+      color: var(--ink);
+      font: inherit;
+      font-family: var(--font-mono);
+      font-size: 0.67rem;
+      padding: 0.18rem 0.34rem;
     }
-    h1 {
+    .cs-filter-rows {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(150px, 1fr));
+      gap: 0.35rem;
+    }
+    .cs-filter-row {
+      display: grid;
+      grid-template-columns: minmax(70px, auto) minmax(0, 1fr);
+      gap: 0.35rem;
+      align-items: center;
+    }
+    .cs-filter-row input,
+    .cs-filter-row select { width: 100%; }
+    .cs-filter-note {
+      line-height: 1.4;
+      color: var(--ink-3);
+    }
+    .cs-filter-note code {
+      font-family: var(--font-mono);
+      font-size: 0.92em;
+      background: var(--paper-2);
+      border: 1px solid var(--rule-2);
+      border-radius: 2px;
+      padding: 0 0.25em;
+      color: var(--ink-2);
+    }
+    .cs-tabstrip {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      min-height: 27px;
+      padding: 0 0.85rem;
+      border-bottom: 1px solid var(--ink-3);
+      background: var(--paper);
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+    .cs-tabstrip[hidden] { display: none; }
+    .cs-tab {
+      align-self: flex-end;
+      height: 22px;
+      flex: 0 0 auto;
+      padding: 0 0.62rem;
+      border: 1px solid var(--rule);
+      border-bottom-color: var(--ink-3);
+      border-radius: 2px 2px 0 0;
+      background: var(--paper-2);
+      color: var(--ink-3);
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .cs-tab.active {
+      background: var(--paper);
+      color: var(--ink);
+      border-color: var(--ink-3);
+      border-bottom-color: var(--paper);
+      margin-bottom: -1px;
+    }
+    .cs-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      width: 100%;
+      max-width: none;
       margin: 0;
-      font-size: clamp(1.1rem, 2vw, 1.45rem);
-      line-height: 1.1;
-      letter-spacing: 0;
+      padding: 0;
+      background: var(--paper);
     }
-    .subtitle {
-      margin: 0.2rem 0 0;
-      color: var(--ink-2);
-      font-size: 0.86rem;
+    .cs-hint {
+      color: var(--ink-3);
+      font-style: italic;
+      padding: 24px 4px;
+      text-align: center;
     }
-    .status {
+    .cs-error {
+      color: var(--danger);
+      background: var(--danger-bg);
+      border: 1px solid var(--danger-border);
+      border-radius: 2px;
+      padding: 12px 14px;
+      margin: 12px;
+    }
+    .cs-count {
+      display: flex;
+      align-items: baseline;
+      gap: 0.55rem;
+      flex-wrap: wrap;
+      margin: 0;
+      padding: 0.35rem 0.8rem;
+      border-bottom: 1px solid var(--rule-2);
+      background: var(--paper);
+      color: var(--ink-3);
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+    }
+    .cs-count strong { color: var(--ink); }
+    .cs-metrics {
       display: grid;
-      justify-items: end;
-      gap: 0.15rem;
-      font-size: 0.78rem;
-      color: var(--ink-2);
-      min-width: 220px;
-    }
-    .status strong { color: var(--ink); }
-    .metrics {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       border-bottom: 1px solid var(--rule);
       background: var(--paper-2);
     }
-    .metric {
-      padding: 0.8rem 1.25rem;
-      border-right: 1px solid var(--rule);
+    .cs-metric {
       min-width: 0;
-    }
-    .metric:last-child { border-right: 0; }
-    .metric b {
-      display: block;
-      font-size: 1.15rem;
-      line-height: 1.1;
-      font-family: var(--mono);
-    }
-    .metric span {
-      display: block;
-      margin-top: 0.2rem;
-      color: var(--ink-2);
-      font-size: 0.76rem;
-      text-transform: uppercase;
-    }
-    .workspace {
-      display: grid;
-      grid-template-columns: minmax(250px, 300px) minmax(0, 1fr) minmax(330px, 430px);
-      min-height: 0;
-    }
-    .filters, .detail {
-      background: var(--panel);
+      padding: 0.46rem 0.65rem;
       border-right: 1px solid var(--rule);
-      min-width: 0;
+      font-family: var(--font-mono);
     }
-    .detail { border-right: 0; border-left: 1px solid var(--rule); }
-    .panel-head {
-      padding: 0.8rem 1rem;
-      border-bottom: 1px solid var(--rule);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-    }
-    .panel-head h2 {
-      margin: 0;
-      font-size: 0.9rem;
-      text-transform: uppercase;
-      color: var(--ink-2);
-    }
-    .filter-body, .detail-body {
-      padding: 1rem;
-      display: grid;
-      gap: 0.85rem;
-      align-content: start;
-    }
-    .field { display: grid; gap: 0.3rem; }
-    label {
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      color: var(--ink-3);
-    }
-    input, select {
-      width: 100%;
-      border: 1px solid var(--rule);
-      background: #fff;
+    .cs-metric:last-child { border-right: 0; }
+    .cs-metric b {
+      display: block;
       color: var(--ink);
-      padding: 0.48rem 0.55rem;
-      min-height: 36px;
-    }
-    input:focus, select:focus {
-      outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
-      border-color: var(--accent);
-    }
-    .split {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.6rem;
-    }
-    .results {
-      min-width: 0;
-      display: grid;
-      grid-template-rows: auto 1fr;
-      background: #fbfaf6;
-    }
-    .result-toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.8rem;
-      padding: 0.75rem 1rem;
-      border-bottom: 1px solid var(--rule);
-      background: var(--panel);
-      min-width: 0;
-    }
-    .result-count {
-      color: var(--ink-2);
       font-size: 0.86rem;
+      line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+    }
+    .cs-metric span {
+      display: block;
+      margin-top: 0.16rem;
+      color: var(--ink-3);
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      letter-spacing: 0.045em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cs-type-group { border-top: 1px solid var(--rule); }
+    .cs-type-group > summary.cs-type-head,
+    .cs-prefix-group > summary.cs-prefix-head,
+    .cs-year-group > summary.cs-year-head {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      gap: 0.55rem;
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      font-family: var(--font-mono);
+    }
+    .cs-type-group > summary.cs-type-head::-webkit-details-marker,
+    .cs-prefix-group > summary.cs-prefix-head::-webkit-details-marker,
+    .cs-year-group > summary.cs-year-head::-webkit-details-marker { display: none; }
+    .cs-type-group > summary.cs-type-head::before,
+    .cs-prefix-group > summary.cs-prefix-head::before,
+    .cs-year-group > summary.cs-year-head::before {
+      content: '+';
+      color: var(--ink-3);
+      width: 1ch;
+      flex: none;
+    }
+    .cs-type-group[open] > summary.cs-type-head::before,
+    .cs-prefix-group[open] > summary.cs-prefix-head::before,
+    .cs-year-group[open] > summary.cs-year-head::before { content: '-'; }
+    .cs-type-group > summary.cs-type-head {
+      padding: 0.45rem 0.8rem;
+      background: var(--paper-3);
+      font-size: 0.74rem;
+    }
+    .cs-prefix-group { border-top: 1px solid var(--rule-2); }
+    .cs-prefix-group > summary.cs-prefix-head {
+      padding: 0.4rem 0.8rem 0.4rem 1.35rem;
+      background: var(--paper-2);
+      font-size: 0.72rem;
+      z-index: 2;
+    }
+    .cs-year-group { border-top: 1px solid var(--rule-2); }
+    .cs-year-group > summary.cs-year-head {
+      padding: 0.3rem 0.8rem 0.3rem 1.9rem;
+      background: var(--paper);
+      font-size: 0.68rem;
+      z-index: 1;
+    }
+    .cs-type-tag,
+    .cs-prefix-code,
+    .cs-year-tag {
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .cs-prefix-code {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 2.55rem;
+      padding: 1px 6px;
+      background: var(--paper-2);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      color: var(--link);
+      text-transform: uppercase;
+    }
+    .cs-type-count,
+    .cs-prefix-count,
+    .cs-year-count { color: var(--ink-3); }
+    .cs-results {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      border-top: 1px solid var(--rule-2);
+    }
+    .cs-results li {
+      background: var(--paper);
+      border-bottom: 1px solid var(--rule-2);
+      border-left: 3px solid transparent;
+      margin: 0;
+      padding: 0;
+      transition: background .12s, border-color .12s;
+    }
+    .cs-results li:nth-child(even) { background: var(--paper-2); }
+    .cs-results li:hover {
+      border-left-color: var(--ink);
+      background: var(--row-hover);
+    }
+    .cs-results li.is-selected {
+      border-left-color: var(--link);
+      background: var(--row-hover);
+    }
+    .cs-case-row-link {
+      align-items: center;
+      color: inherit;
+      display: grid;
+      gap: 0.55rem;
+      grid-template-columns: 16px minmax(9.5rem, 0.24fr) minmax(0, 1fr) minmax(150px, 0.28fr);
+      min-width: 0;
+      padding: 0.42rem 0.8rem;
+      text-decoration: none;
+    }
+    .cs-case-state {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid color-mix(in srgb, var(--ink-3) 42%, transparent);
+      color: var(--ink-3);
+      line-height: 1;
+    }
+    .cs-case-state-dot,
+    .cs-case-state-ring,
+    .cs-case-state-partial,
+    .cs-case-state-check {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      box-sizing: border-box;
+    }
+    .cs-case-state-dot { background: var(--ink-3); opacity: 0.55; }
+    .cs-case-state-ring { border: 1px solid var(--ok); background: var(--ok); }
+    .cs-case-state-partial { border: 1px solid var(--warn); background: transparent; }
+    .cs-case-state-check {
+      position: relative;
+      background: var(--ok);
+      border: 1px solid var(--ok);
+    }
+    .cs-case-state-check::after {
+      content: '';
+      position: absolute;
+      left: 3px;
+      top: 1px;
+      width: 3px;
+      height: 6px;
+      border: solid var(--paper);
+      border-width: 0 1.7px 1.7px 0;
+      transform: rotate(42deg);
+    }
+    .cs-r-title {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--ink);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cs-r-title-name {
+      display: block;
+      margin-top: 0.08rem;
+      font-family: var(--font-serif);
+      font-size: 0.82rem;
+      color: var(--ink-2);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cs-r-sub {
+      display: block;
+      font-family: var(--font-serif);
+      color: var(--ink);
+      font-size: 0.82rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cs-r-snippet {
+      display: block;
+      min-width: 0;
+      margin-top: 0.08rem;
+      font-family: var(--font-mono);
+      font-size: 0.63rem;
+      line-height: 1.45;
+      color: var(--ink-3);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cs-r-meta {
+      font-family: var(--font-mono);
+      color: var(--ink-3);
+      font-size: 0.66rem;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cs-badge {
+      display: inline-block;
+      font-size: 0.68rem;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: var(--paper-2);
+      color: var(--ink-2);
+      border: 1px solid var(--rule);
+      margin-left: 6px;
       white-space: nowrap;
     }
-    .result-table-wrap {
-      overflow: auto;
+    .cs-badge.cs-na {
+      background: var(--danger-bg);
+      color: var(--danger);
+      border-color: var(--danger-border);
+    }
+    .cs-badge.cs-src {
+      background: color-mix(in srgb, var(--link) 13%, var(--paper));
+      color: var(--link);
+      border-color: color-mix(in srgb, var(--link) 38%, var(--rule));
+    }
+    .cs-badge.cs-warn {
+      background: var(--warn-bg);
+      color: var(--warn);
+      border-color: var(--warn-border);
+    }
+    .cs-detail-head {
+      position: relative;
+      background: var(--paper-2);
+      border-bottom: 1px solid var(--rule);
+      border-radius: 0;
+      padding: 0.55rem 0.85rem;
+      margin: 0;
+    }
+    .cs-detail-head .cs-casenum {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .cs-title-line {
+      display: flex;
+      align-items: center;
+      gap: 0.42rem;
+      min-width: 0;
+      margin: 2px 0;
+    }
+    .cs-detail-head .cs-casetitle {
+      font-family: var(--font-serif);
+      font-size: 1.05rem;
+      font-weight: 700;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .cs-detail-head .cs-headmeta {
+      color: var(--ink-3);
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      line-height: 1.45;
+    }
+    .cs-action-row {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      flex-wrap: wrap;
+      margin-top: 0.45rem;
+    }
+    .cs-section {
+      background: var(--paper);
+      border-bottom: 1px solid var(--rule-2);
+      border-radius: 0;
+      padding: 0;
+      margin: 0;
+    }
+    .cs-section > h3 {
+      margin: 0;
+      font-family: var(--font-serif);
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--ink);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--rule-2);
+      padding: 0.42rem 0.65rem;
+      background: var(--paper-2);
+    }
+    .cs-row {
+      margin: 0;
+      padding: 0.42rem 0.65rem;
+      border-bottom: 1px solid var(--rule-2);
+    }
+    .cs-row:last-child { border-bottom: 0; }
+    .cs-field {
+      color: var(--ink-2);
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .cs-field-lead {
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .cs-overview-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.95fr);
+      gap: 0;
       min-height: 0;
     }
-    table {
+    .cs-overview-grid > .cs-pane:first-child { border-right: 1px solid var(--rule); }
+    .cs-pane {
+      display: grid;
+      align-content: start;
+      gap: 0;
+      min-width: 0;
+    }
+    .cs-dossier {
+      display: grid;
+      gap: 0.42rem;
+      padding: 0.6rem 0.68rem;
+      font-family: var(--font-serif);
+      font-size: 0.82rem;
+      line-height: 1.45;
+      color: var(--ink);
+    }
+    .cs-dossier-ledger {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.32rem;
+      font-family: var(--font-mono);
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      letter-spacing: 0.045em;
+    }
+    .cs-dossier-ledger span {
+      min-width: 0;
+      padding: 0.28rem 0.34rem;
+      border: 1px solid var(--rule-2);
+      background: var(--paper-2);
+      color: var(--ink-3);
+      overflow-wrap: anywhere;
+    }
+    .cs-dossier-ledger b {
+      display: block;
+      margin-top: 0.08rem;
+      font-size: 0.72rem;
+      color: var(--ink);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .cs-kv-grid {
+      display: grid;
+      grid-template-columns: minmax(130px, 0.34fr) minmax(0, 1fr);
+      gap: 0;
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+    }
+    .cs-kv-grid dt,
+    .cs-kv-grid dd {
+      margin: 0;
+      padding: 0.38rem 0.55rem;
+      border-bottom: 1px solid var(--rule-2);
+    }
+    .cs-kv-grid dt { color: var(--ink-3); background: var(--plain-soft); }
+    .cs-kv-grid dd { color: var(--ink); overflow-wrap: anywhere; }
+    .cs-record-table-wrap {
+      overflow: auto;
+      max-height: none;
+    }
+    .cs-record-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.86rem;
+      font-size: 0.76rem;
     }
-    th, td {
-      padding: 0.55rem 0.6rem;
+    .cs-record-table th,
+    .cs-record-table td {
+      padding: 0.42rem 0.5rem;
       border-bottom: 1px solid var(--rule-2);
       vertical-align: top;
       text-align: left;
     }
-    th {
+    .cs-record-table th {
       position: sticky;
       top: 0;
-      background: #f4f2ea;
       z-index: 1;
-      color: var(--ink-2);
-      font-size: 0.72rem;
-      text-transform: uppercase;
-    }
-    tbody tr { cursor: pointer; }
-    tbody tr:hover, tbody tr.selected { background: #eef5f1; }
-    .case-no {
-      font-family: var(--mono);
-      white-space: nowrap;
-      color: var(--accent);
-    }
-    .title-cell {
-      min-width: 260px;
-      max-width: 520px;
-    }
-    .muted { color: var(--ink-3); }
-    .pill-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.35rem;
-      margin-top: 0.35rem;
-    }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      min-height: 22px;
-      padding: 0.12rem 0.42rem;
-      border: 1px solid var(--rule);
-      background: #fff;
-      color: var(--ink-2);
-      font-size: 0.72rem;
-      white-space: nowrap;
-    }
-    .pill.green { border-color: color-mix(in srgb, var(--accent-2) 45%, var(--rule)); color: var(--accent-2); }
-    .pill.warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--rule)); color: var(--warn); }
-    .pill.red { border-color: color-mix(in srgb, var(--danger) 45%, var(--rule)); color: var(--danger); }
-    .detail-title {
-      margin: 0;
-      font-size: 1rem;
-      line-height: 1.25;
-    }
-    .detail-sub {
-      margin: 0.25rem 0 0;
-      color: var(--ink-2);
-      font-size: 0.82rem;
-      font-family: var(--mono);
-    }
-    .tabs {
-      display: flex;
-      gap: 0.35rem;
-      flex-wrap: wrap;
-      padding: 0.75rem 1rem 0;
-    }
-    .tab {
-      min-height: 30px;
-      padding: 0 0.55rem;
-      font-size: 0.78rem;
-    }
-    .tab.active {
-      border-color: var(--accent);
-      background: #e9f2f7;
-      color: var(--accent);
-    }
-    .kv {
-      display: grid;
-      grid-template-columns: minmax(90px, 0.42fr) minmax(0, 1fr);
-      gap: 0.35rem 0.7rem;
-      font-size: 0.84rem;
-    }
-    .kv dt { color: var(--ink-3); }
-    .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-    .list {
-      display: grid;
-      gap: 0.5rem;
-    }
-    .row-card {
-      border: 1px solid var(--rule-2);
-      background: #fff;
-      padding: 0.65rem;
-    }
-    .row-card b {
-      display: block;
-      margin-bottom: 0.25rem;
-    }
-    .row-card small {
+      background: var(--paper-2);
       color: var(--ink-3);
-      font-family: var(--mono);
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.045em;
     }
-    .empty, .error {
-      padding: 0.8rem;
-      border: 1px solid var(--rule);
-      background: #fff;
+    .cs-record-table td {
+      font-family: var(--font-serif);
+      color: var(--ink);
+      line-height: 1.38;
+    }
+    .cs-record-table td.cs-mono {
+      font-family: var(--font-mono);
       color: var(--ink-2);
+      white-space: nowrap;
     }
-    .error { border-color: color-mix(in srgb, var(--danger) 45%, var(--rule)); color: var(--danger); }
-    .loading {
+    .cs-raw {
+      margin: 0;
+      padding: 0.75rem;
+      overflow: auto;
+      white-space: pre-wrap;
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      line-height: 1.45;
+      color: var(--ink-2);
+      background: var(--plain-soft);
+      border-bottom: 1px solid var(--rule-2);
+    }
+    .cs-empty {
+      padding: 1rem;
+      text-align: center;
+      color: var(--ink-3);
+      font-style: italic;
+    }
+    .cs-loading {
       padding: 1rem;
       color: var(--ink-2);
+      font-style: italic;
     }
-    @media (max-width: 1100px) {
-      .workspace { grid-template-columns: 260px minmax(0, 1fr); }
-      .detail { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--rule); }
+    .cs-line-list {
+      display: grid;
+      gap: 0;
     }
-    @media (max-width: 780px) {
-      .topbar { align-items: flex-start; flex-direction: column; }
-      .status { justify-items: start; min-width: 0; }
-      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .workspace { grid-template-columns: 1fr; }
-      .filters { border-right: 0; border-bottom: 1px solid var(--rule); }
-      .result-toolbar { flex-direction: column; align-items: stretch; }
-      .split { grid-template-columns: 1fr; }
-      th:nth-child(4), td:nth-child(4),
-      th:nth-child(5), td:nth-child(5) { display: none; }
+    .cs-line-list .cs-row small {
+      display: block;
+      margin-bottom: 0.16rem;
+      color: var(--ink-3);
+      font-family: var(--font-mono);
+      font-size: 0.64rem;
+    }
+    @media (max-width: 980px) {
+      .cs-filter-rows { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+      .cs-overview-grid { grid-template-columns: 1fr; }
+      .cs-overview-grid > .cs-pane:first-child { border-right: 0; }
+      .cs-case-row-link {
+        grid-template-columns: 16px minmax(8.5rem, 0.32fr) minmax(0, 1fr);
+      }
+      .cs-r-meta {
+        grid-column: 1 / -1;
+        text-align: left;
+        padding-left: 16px;
+      }
+      .cs-dossier-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .cs-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      .cs-panel { height: auto; min-height: 100vh; overflow: visible; }
+      .cs-body { overflow: visible; }
+      .cs-status-strip {
+        gap: 0.34rem;
+        padding: 0.32rem 0.55rem;
+        font-size: 0.6rem;
+        letter-spacing: 0.08em;
+        flex-wrap: nowrap;
+        overflow: hidden;
+      }
+      .cs-status-strip > span:nth-of-type(-n+4) { display: none; }
+      .cs-entity-bar { padding: 0.5rem 0.55rem; }
+      .cs-identity { min-width: 0; }
+      .cs-topbar h2 { white-space: normal; }
+      .cs-searchwrap {
+        order: 3;
+        max-width: none;
+        flex-basis: 100%;
+      }
+      .cs-filter-rows { grid-template-columns: 1fr; }
+      .cs-filter-row { grid-template-columns: 1fr; }
+      .cs-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .cs-case-row-link {
+        grid-template-columns: 16px minmax(0, 1fr);
+      }
+      .cs-case-row-link > span:nth-child(3),
+      .cs-r-meta {
+        grid-column: 2 / -1;
+        padding-left: 0;
+      }
+      .cs-dossier-ledger { grid-template-columns: 1fr; }
+      .cs-kv-grid { grid-template-columns: 1fr; }
+      .cs-record-table th:nth-child(n+4),
+      .cs-record-table td:nth-child(n+4) { display: none; }
     }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <header class="topbar">
-      <div class="brand">
-        <div class="mark" aria-hidden="true">KCSC</div>
-        <div>
-          <h1>King County Superior Court</h1>
-          <p class="subtitle">Case records, docket entries, parties, counsel, hearings, and charges.</p>
-        </div>
+  <div id="case-search-panel" class="cs-panel">
+    <div class="cs-topbar">
+      <div class="cs-status-strip">
+        <strong>KCSC</strong><span class="dot">&middot;</span><span>Case Archive</span><span class="dot">&middot;</span><span>Records</span>
+        <span class="grow"></span><span id="cs-sync">loading data</span>
+        <button class="bug-report-trigger" type="button" data-bug-report data-bug-report-app="KCSC" data-bug-report-repo="aimesy/kcsc" data-bug-report-labels="bug,site-report" aria-label="Report a bug" title="Report a bug">
+          <svg class="bug-report-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 7.3V6.2a3 3 0 0 1 6 0v1.1"></path>
+            <path d="M12 20.5c-3.25 0-5.8-2.6-5.8-5.95v-3.1A4.15 4.15 0 0 1 10.35 7.3h3.3a4.15 4.15 0 0 1 4.15 4.15v3.1c0 3.35-2.55 5.95-5.8 5.95Z"></path>
+            <path d="M12 20.5v-9.2"></path>
+            <path d="M6.25 10.3C4.55 10.05 3.35 8.7 3.15 6.8"></path>
+            <path d="M17.75 10.3c1.7-.25 2.9-1.6 3.1-3.5"></path>
+            <path d="M6.2 14h-4"></path>
+            <path d="M17.8 14h4"></path>
+            <path d="M6.95 17.3c-1.65.45-2.9 1.85-3.15 3.55"></path>
+            <path d="M17.05 17.3c1.65.45 2.9 1.85 3.15 3.55"></path>
+            <path d="M7.3 2.5l2 2"></path>
+            <path d="M16.7 2.5l-2 2"></path>
+          </svg>
+        </button>
+        <button class="theme-toggle" type="button" data-theme-toggle aria-label="Theme spectrum" title="Theme spectrum">
+          <svg class="theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3a9 9 0 0 0 0 18h1.2a1.9 1.9 0 0 0 1.4-3.2 1.9 1.9 0 0 1 1.4-3.2h1.1A4.9 4.9 0 0 0 21 9.8C21 6 17 3 12 3Z"></path>
+            <circle cx="7.7" cy="10.2" r="1"></circle>
+            <circle cx="10.5" cy="6.9" r="1"></circle>
+            <circle cx="14.7" cy="7.4" r="1"></circle>
+            <circle cx="16.6" cy="11" r="1"></circle>
+          </svg>
+        </button>
       </div>
-      <div class="status">
-        <div><strong id="load-state">Loading</strong></div>
-        <div id="data-source">Data source pending</div>
-        <div id="generated-at"></div>
-      </div>
-    </header>
-
-    <section class="metrics" aria-label="Corpus totals">
-      <div class="metric"><b id="metric-cases">0</b><span>Cases</span></div>
-      <div class="metric"><b id="metric-docket">0</b><span>Docket rows</span></div>
-      <div class="metric"><b id="metric-parties">0</b><span>Parties</span></div>
-      <div class="metric"><b id="metric-attorneys">0</b><span>Attorneys</span></div>
-      <div class="metric"><b id="metric-hearings">0</b><span>Hearings</span></div>
-    </section>
-
-    <main class="workspace">
-      <aside class="filters">
-        <div class="panel-head">
-          <h2>Filters</h2>
-          <button id="reset-btn" type="button">Reset</button>
+      <div class="cs-entity-bar">
+        <div class="cs-identity">
+          <span class="cs-kicker" id="cs-kicker">Cases</span>
+          <h2 id="cs-entity-title">King County Superior Court</h2>
+          <span class="cs-entity-meta" id="cs-entity-meta">data source pending</span>
         </div>
-        <div class="filter-body">
-          <div class="field">
-            <label for="q">Search</label>
-            <input id="q" type="search" autocomplete="off" placeholder="case, party, title, cause">
-          </div>
-          <div class="split">
-            <div class="field">
-              <label for="type-filter">Type</label>
-              <select id="type-filter"></select>
-            </div>
-            <div class="field">
-              <label for="location-filter">Location</label>
-              <select id="location-filter"></select>
+        <div class="cs-searchwrap">
+          <div class="cs-scope-wrap">
+            <button type="button" class="cs-scope-btn" id="cs-scope-btn" aria-haspopup="true" aria-expanded="false">
+              <span id="cs-scope-label">Cases</span>&nbsp;v
+            </button>
+            <div class="cs-scope-menu" id="cs-scope-menu" role="menu" aria-label="Search scope">
+              <label><input type="radio" name="cs-scope" value="cases" checked> Cases</label>
+              <label><input type="radio" name="cs-scope" value="docket"> Dockets</label>
+              <label><input type="radio" name="cs-scope" value="parties"> Parties</label>
+              <label><input type="radio" name="cs-scope" value="counsel"> Counsel</label>
             </div>
           </div>
-          <div class="field">
-            <label for="status-filter">Status</label>
-            <select id="status-filter"></select>
-          </div>
-          <div class="split">
-            <div class="field">
-              <label for="from-date">Filed from</label>
-              <input id="from-date" type="date">
-            </div>
-            <div class="field">
-              <label for="to-date">Filed to</label>
-              <input id="to-date" type="date">
-            </div>
-          </div>
-          <div class="field">
-            <label for="sort-filter">Sort</label>
+          <input type="search" class="cs-search" id="cs-search" placeholder="Search title, party, counsel, docket text, case number, or namespaces" autocomplete="off">
+        </div>
+        <button type="button" class="hbtn" id="cs-filter-btn" title="Advanced KCSC filters">Advanced</button>
+        <button type="button" class="hbtn" id="cs-reset-btn" title="Clear search and filters">Reset</button>
+        <a class="hbtn cs-data-source" href="https://github.com/aimesy/kcsc-data" target="_blank" rel="noopener noreferrer">Data</a>
+      </div>
+      <div class="cs-filter-panel" id="cs-filter-panel" hidden>
+        <div class="cs-filter-head">
+          <label>Type <select id="type-filter"></select></label>
+          <label>Location <select id="location-filter"></select></label>
+          <label>Status <select id="status-filter"></select></label>
+          <label>Sort
             <select id="sort-filter">
               <option value="filed_desc">Newest filing</option>
               <option value="filed_asc">Oldest filing</option>
@@ -404,50 +978,31 @@
               <option value="docket_count">Most docket rows</option>
               <option value="hearing_date">Next hearing</option>
             </select>
+          </label>
+        </div>
+        <div class="cs-filter-rows">
+          <div class="cs-filter-row"><label for="from-date">From</label><input id="from-date" type="date"></div>
+          <div class="cs-filter-row"><label for="to-date">To</label><input id="to-date" type="date"></div>
+          <div class="cs-filter-row"><label for="node-filter">Node</label><select id="node-filter"></select></div>
+          <div class="cs-filter-row"><label for="content-filter">Rows</label>
+            <select id="content-filter">
+              <option value="">Any case</option>
+              <option value="docket">Has docket rows</option>
+              <option value="hearing">Has hearings</option>
+              <option value="party">Has parties</option>
+              <option value="counsel">Has counsel</option>
+              <option value="document">Has deferred document rows</option>
+            </select>
           </div>
         </div>
-      </aside>
-
-      <section class="results">
-        <div class="result-toolbar">
-          <div class="result-count" id="result-count">0 cases</div>
-          <div class="pill-row" id="active-chips"></div>
-        </div>
-        <div class="result-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Case</th>
-                <th>Title</th>
-                <th>Filed</th>
-                <th>Type</th>
-                <th>Location</th>
-                <th>Rows</th>
-                <th>Next hearing</th>
-              </tr>
-            </thead>
-            <tbody id="case-results">
-              <tr><td colspan="7" class="loading">Loading data.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <aside class="detail">
-        <div class="panel-head">
-          <div>
-            <h2>Case</h2>
-            <p class="detail-sub" id="detail-case-number">No case selected</p>
-          </div>
-          <a id="detail-source" href="#" target="_blank" rel="noreferrer" hidden>Portal</a>
-        </div>
-        <div id="detail-tabs" class="tabs" hidden></div>
-        <div class="detail-body" id="case-detail">
-          <div class="empty">Select a case row.</div>
-        </div>
-      </aside>
-    </main>
+        <div class="cs-filter-note">Search scopes use the normalized parquet indexes, then the selected case opens its canonical JSON. Namespaces supported in the search box: <code>case:</code> <code>title:</code> <code>party:</code> <code>counsel:</code> <code>docket:</code> <code>cause:</code> <code>status:</code> <code>node:</code> <code>from:</code> and <code>to:</code>.</div>
+      </div>
+      <div class="cs-tabstrip" id="cs-tabstrip" role="tablist" hidden></div>
+    </div>
+    <div class="cs-body" id="cs-body">
+      <div class="cs-hint">Loading archived dockets...</div>
+    </div>
   </div>
-  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260701-5"></script>
+  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260707-sfsc-shell-1"></script>
 </body>
 </html>
