@@ -23,7 +23,9 @@ assert(index.includes('<title>KCSC Case Archive</title>'), 'index title must ide
 assert(index.includes('data-bug-report-repo="aimesy/kcsc"'), 'KCSC bug-report repo is missing');
 assert(index.includes('href="https://github.com/aimesy/kcsc-data"'), 'KCSC data repo link is missing');
 assert(index.includes('id="cs-scope-btn" aria-haspopup="true" aria-controls="cs-scope-menu" aria-expanded="false"'), 'scope button must match SFSC aria controls');
-assert(index.includes('<span id="cs-scope-label">Cases</span> ▾'), 'scope button must use the SFSC chevron');
+assert(index.includes('<span id="cs-scope-label">Cases</span><span class="cs-scope-chevron" aria-hidden="true"></span>'), 'scope button must use the CSS chevron');
+assert(index.includes('.cs-scope-chevron'), 'scope button chevron must be CSS-drawn');
+assert(!index.includes('<span id="cs-scope-label">Cases</span> ▾'), 'scope button must not render a font-dependent chevron glyph');
 assert(!index.includes('<span id="cs-scope-label">Cases</span>&nbsp;v'), 'scope button must not render a literal v');
 assert(!index.includes('<span id="cs-scope-label">Cases</span> v'), 'scope button must not render a literal v');
 assert(index.includes('id="cs-scope-menu" role="radiogroup" aria-label="Search scope"'), 'scope menu must use SFSC radiogroup semantics');

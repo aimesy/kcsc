@@ -185,7 +185,16 @@
       border-right: none;
       border-radius: 2px 0 0 2px;
       padding: 0.28rem 0.5rem;
+      gap: 0.35rem;
       white-space: nowrap;
+    }
+    .cs-scope-chevron {
+      width: 0.42rem;
+      height: 0.42rem;
+      flex: 0 0 auto;
+      border-right: 1px solid currentColor;
+      border-bottom: 1px solid currentColor;
+      transform: translateY(-0.08rem) rotate(45deg);
     }
     .cs-scope-menu {
       display: none;
@@ -991,7 +1000,7 @@
         <div class="cs-searchwrap">
           <div class="cs-scope-wrap">
             <button type="button" class="cs-scope-btn" id="cs-scope-btn" aria-haspopup="true" aria-controls="cs-scope-menu" aria-expanded="false">
-              <span id="cs-scope-label">Cases</span> ▾
+              <span id="cs-scope-label">Cases</span><span class="cs-scope-chevron" aria-hidden="true"></span>
             </button>
             <div class="cs-scope-menu" id="cs-scope-menu" role="radiogroup" aria-label="Search scope">
               <label><input type="radio" name="cs-scope" value="cases" checked> Cases</label>
