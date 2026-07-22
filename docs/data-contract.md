@@ -5,6 +5,8 @@ The viewer expects the `kcsc-data` split-repo layout:
 | Path | Purpose |
 |---|---|
 | `data/manifest.json` | Startup counts and table paths. |
+| `archive/cases-index/manifest.json` | Startup index shard metadata. |
+| `archive/cases-index/<prefix>.ndjson` | Compact case rows loaded in bounded batches. |
 | `data/cases.parquet` | One row per canonical case. |
 | `data/calendar.parquet` | Hearing rows derived from KCSC Events/docket tabs. |
 | `data/docket_entries.parquet` | Non-hearing docket/event rows. |

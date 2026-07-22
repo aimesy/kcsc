@@ -33,7 +33,9 @@ assert(index.includes('value="parties"') && index.includes('value="counsel"'), '
 assert(app.includes("raw.githubusercontent.com/aimesy/kcsc-data/master"), 'viewer is not wired to kcsc-data');
 assert(app.includes("setAttribute('aria-expanded'"), 'scope button must update aria-expanded');
 assert(app.includes('data/manifest.json'), 'data manifest load is missing');
-assert(app.includes("state.manifest?.archive?.cases_index || 'archive/cases-index.ndjson'"), 'case index load is missing');
+assert(app.includes('state.manifest?.archive?.cases_index_parts || []'), 'sharded case index load is missing');
+assert(app.includes("state.manifest?.archive?.cases_index || 'archive/cases-index.ndjson'"), 'legacy case index fallback is missing');
+assert(app.includes('const batchSize = 4'), 'case index shard concurrency must remain bounded');
 assert(app.includes('loadCaseIndexRows'), 'case index startup loader is missing');
 assert(!app.includes("await registerParquet(tableName, path)"), 'viewer must not materialize all parquet tables at startup');
 assert(app.includes('archive/cases/${encodeURIComponent(canonical)}.json'), 'lazy per-case JSON load is missing');

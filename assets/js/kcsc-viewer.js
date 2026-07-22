@@ -254,8 +254,28 @@ async function loadEntityParquetRows(entityTableName, parquetPath) {
 }
 
 async function loadCaseIndexRows() {
-  const path = state.manifest?.archive?.cases_index || 'archive/cases-index.ndjson';
-  const got = await fetchTextFrom(state.dataBase, path);
+  const configuredParts = state.manifest?.archive?.cases_index_parts || [];
+  if (configuredParts.length) {
+    const rows = [];
+    const batchSize = 4;
+    for (let offset = 0; offset < configuredParts.length; offset += batchSize) {
+      const batch = configuredParts.slice(offset, offset + batchSize);
+      const responses = await Promise.all(batch.map((part) => {
+        const path = typeof part === 'string' ? part : part.path;
+        return fetchTextFrom(state.dataBase, path);
+      }));
+      for (const got of responses) {
+        rows.push(...got.text
+          .split(/\r?\n/)
+          .filter((line) => line.trim())
+          .map((line) => JSON.parse(line)));
+      }
+    }
+    return rows;
+  }
+
+  const legacyPath = state.manifest?.archive?.cases_index || 'archive/cases-index.ndjson';
+  const got = await fetchTextFrom(state.dataBase, legacyPath);
   return got.text
     .split(/\r?\n/)
     .filter((line) => line.trim())

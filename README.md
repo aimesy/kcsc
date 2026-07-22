@@ -35,6 +35,8 @@ http://127.0.0.1:8765/kcsc/?dataBase=../kcsc-data/
 Data contract:
 
 - `data/manifest.json`
+- `archive/cases-index/manifest.json`
+- `archive/cases-index/<prefix>.ndjson`
 - `data/cases.parquet`
 - `data/docket_entries.parquet`
 - `data/parties.parquet`
