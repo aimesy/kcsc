@@ -1,0 +1,10 @@
+[Unit]
+Description=Run KCSC raw release backup hourly
+
+[Timer]
+OnCalendar=*-*-* 06:30:00
+Persistent=false
+Unit=kcsc-raw-release-backup.service
+
+[Install]
+WantedBy=timers.target

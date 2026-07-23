@@ -1,0 +1,15 @@
+[Unit]
+Description=Archive KCSC completed raw runs to verified local and GitHub release storage
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/kcsc
+Environment=KCSC_GITHUB_TOKEN_FILE=/etc/nysc/github-token
+ExecCondition=/bin/sh -c '! pgrep -f "/srv/kcsc/scripts/[r]efresh_canonical_data.py|/srv/kcsc/scripts/[d]edupe_kcsc_storage.py" >/dev/null'
+ExecStart=/usr/bin/env node /srv/kcsc/scripts/archive_raw_release.mjs --source-root /var/lib/kcsc --include-root runs --repo aimesy/kcsc-data --github-token-file /etc/nysc/github-token --snapshot-prefix raw-kcsc-runs --state-file /var/lib/kcsc/raw-release-state/runs.json --staging-dir /var/lib/kcsc/raw-release-staging --vault-dir /var/lib/kcsc/raw-release-vault --metadata-dir /srv/kcsc-data/archive/promotions/raw-release --min-age-ms 21600000
+TimeoutStartSec=4h
+Nice=15
+CPUWeight=20
+IOWeight=20

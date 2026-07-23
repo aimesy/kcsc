@@ -1,0 +1,11 @@
+[Unit]
+Description=Prune only KCSC raw runs proven present in local and GitHub release vaults
+ConditionPathExists=/etc/kcsc/allow-raw-release-prune
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/kcsc
+ExecStart=/usr/bin/env node /srv/kcsc/scripts/prune_verified_raw_release.mjs --source-root /var/lib/kcsc --include-root runs --state-file /var/lib/kcsc/raw-release-state/runs.json --min-age-ms 604800000 --apply --record-dir /var/lib/kcsc/raw-release-prune
+Nice=15
+CPUWeight=20
+IOWeight=20
