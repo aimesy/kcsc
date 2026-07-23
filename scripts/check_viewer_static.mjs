@@ -18,8 +18,35 @@ function assert(condition, message) {
 
 const index = read('index.html');
 const app = read('assets/js/kcsc-viewer.js');
+const sharedThemeAssets = new Set([
+  'theme.css',
+  'theme-bar.css',
+  'bug-report.css',
+  'theme.js',
+  'bug-report.js',
+]);
+const sharedThemeMatches = [...index.matchAll(
+  /https:\/\/cdn\.jsdelivr\.net\/gh\/aimesy\/themes@([0-9a-f]{40})\/src\/(theme\.css|theme-bar\.css|bug-report\.css|theme\.js|bug-report\.js)/g,
+)];
+const allSharedThemeMatches = [...index.matchAll(
+  /https:\/\/cdn\.jsdelivr\.net\/gh\/aimesy\/themes[^"' \s>]*/g,
+)];
 
 assert(index.includes('<title>KCSC Case Archive</title>'), 'index title must identify KCSC');
+assert(index.includes('<meta name="theme-color" content="#24211d">'), 'theme-color metadata is missing');
+assert(sharedThemeMatches.length === sharedThemeAssets.size, 'shared theme asset set must contain exactly five pinned assets');
+assert(allSharedThemeMatches.length === sharedThemeAssets.size, 'unexpected shared theme asset reference remains');
+assert(
+  sharedThemeAssets.size === new Set(sharedThemeMatches.map((match) => match[2])).size
+    && [...sharedThemeAssets].every((asset) => sharedThemeMatches.some((match) => match[2] === asset)),
+  'shared theme asset set is incomplete or duplicated',
+);
+assert(new Set(sharedThemeMatches.map((match) => match[1])).size === 1, 'shared theme assets must use one commit SHA');
+assert(!/aimesy\/themes(?:\/|@(master|main|latest)\/)/i.test(index), 'mutable or unversioned shared theme reference remains');
+assert(!index.includes('font-system.'), 'unused shared font-system assets must not load');
+assert((index.match(/\bdata-theme-toggle\b/g) || []).length === 1, 'viewer must contain exactly one theme toggle');
+assert((index.match(/\bamyc-theme-bar\b/g) || []).length === 1, 'viewer must contain exactly one shared theme bar');
+assert(index.indexOf('</style>') < index.indexOf('/src/theme.css'), 'shared theme CSS must load after inline viewer CSS');
 assert(index.includes('data-bug-report-repo="aimesy/kcsc"'), 'KCSC bug-report repo is missing');
 assert(index.includes('href="https://github.com/aimesy/kcsc-data"'), 'KCSC data repo link is missing');
 assert(index.includes('id="cs-scope-btn" aria-haspopup="true" aria-controls="cs-scope-menu" aria-expanded="false"'), 'scope button must match SFSC aria controls');

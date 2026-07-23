@@ -5,12 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KCSC Case Archive</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes/src/theme.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes/src/bug-report.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes/src/font-system.css">
-  <script src="https://cdn.jsdelivr.net/gh/aimesy/themes/src/theme.js" defer></script>
-  <script src="https://cdn.jsdelivr.net/gh/aimesy/themes/src/bug-report.js" defer></script>
-  <script src="https://cdn.jsdelivr.net/gh/aimesy/themes/src/font-system.js" defer></script>
+  <meta name="theme-color" content="#24211d">
   <style>
     :root {
       color-scheme: light;
@@ -72,50 +67,6 @@
       background: var(--paper);
       color: var(--ink);
       border-bottom: 1px solid var(--rule);
-    }
-    .cs-status-strip {
-      display: flex;
-      align-items: center;
-      gap: 0.45rem;
-      min-height: 30px;
-      padding: 0.24rem 0.85rem;
-      background: var(--chrome);
-      color: var(--chrome-ink);
-      font-family: var(--font-mono);
-      font-size: 0.66rem;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      border-bottom: 1px solid var(--chrome-rule);
-    }
-    .cs-status-strip strong { color: var(--chrome-accent); }
-    .cs-status-strip .dot { color: color-mix(in srgb, var(--chrome-ink) 52%, transparent); }
-    .cs-status-strip .grow { flex: 1; }
-    .cs-status-strip button {
-      flex: 0 0 auto;
-      width: 28px;
-      height: 28px;
-      padding: 0;
-      border: 1px solid var(--chrome-rule);
-      background: transparent;
-      color: var(--chrome-ink);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-    }
-    .cs-status-strip button:hover {
-      border-color: var(--chrome-accent);
-      color: var(--chrome-accent);
-    }
-    .bug-report-icon,
-    .theme-icon {
-      width: 17px;
-      height: 17px;
-      fill: none;
-      stroke: currentColor;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      stroke-width: 1.7;
     }
     .cs-entity-bar {
       display: flex;
@@ -924,12 +875,7 @@
       .cs-panel { height: auto; min-height: 100vh; overflow: visible; }
       .cs-body { overflow: visible; }
       .cs-status-strip {
-        gap: 0.34rem;
-        padding: 0.32rem 0.55rem;
-        font-size: 0.6rem;
-        letter-spacing: 0.08em;
         flex-wrap: nowrap;
-        overflow: hidden;
       }
       .cs-status-strip > span:nth-of-type(-n+4) { display: none; }
       .cs-entity-bar { padding: 0.5rem 0.55rem; }
@@ -959,11 +905,16 @@
       .cs-record-table:not(.cs-document-table) td:nth-child(n+4) { display: none; }
     }
   </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/theme.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/theme-bar.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/bug-report.css">
+  <script src="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/theme.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/bug-report.js" defer></script>
 </head>
 <body>
   <div id="case-search-panel" class="cs-panel">
     <div class="cs-topbar">
-      <div class="cs-status-strip">
+      <div class="cs-status-strip amyc-theme-bar">
         <strong>KCSC</strong><span class="dot">&middot;</span><span>Case Archive</span><span class="dot">&middot;</span><span>Records</span>
         <span class="grow"></span><span id="cs-sync">loading data</span>
         <button class="bug-report-trigger" type="button" data-bug-report data-bug-report-app="KCSC" data-bug-report-repo="aimesy/kcsc" data-bug-report-labels="bug,site-report" aria-label="Report a bug" title="Report a bug">
