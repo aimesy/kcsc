@@ -1,6 +1,8 @@
 [Unit]
-Description=Prune only KCSC raw runs proven present in local and GitHub release vaults
-ConditionPathExists=/etc/kcsc/allow-raw-release-prune
+Description=NON-DEPLOYABLE historical KCSC product-repository prune placeholder
+# The operational unit is canonical only in aimesy/kcsc-ops. This condition is
+# always false because the root directory exists.
+ConditionPathExists=!/
 
 [Service]
 Type=oneshot

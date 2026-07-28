@@ -11,6 +11,15 @@ KCSC is split into three repositories:
 The product viewer does not commit bulk data. It loads `kcsc-data` by default
 from `https://raw.githubusercontent.com/aimesy/kcsc-data/master/`.
 
+## Operational source boundary
+
+Only `aimesy/kcsc-ops` may supply KCSC capture, maintenance, pruning, or
+systemd files to the VPS. The legacy product-repository paths
+`scripts/prune_verified_raw_release.mjs` and
+`systemd/kcsc-raw-release-prune.service` are retained as fail-closed historical
+placeholders; they are not deployment inputs and must never be copied to
+`/srv/kcsc/scripts` or `/etc/systemd/system`.
+
 The ops repo must not contain `/etc/kcsc`, storage-state files, passwords,
 cookies, browser profiles, generated logs, or live corpora. Data promotion is
 from VPS capture outputs into `kcsc-data`, then the `kcsc` Pages workflow can

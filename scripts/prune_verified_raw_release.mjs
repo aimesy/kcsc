@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+console.error(
+  "This is a non-deployable historical placeholder. Use aimesy/kcsc-ops scripts/prune_verified_raw_release.mjs.",
+);
+process.exit(78);
+
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
