@@ -1199,7 +1199,8 @@ function resultCountHtml(count, total, options = {}) {
   const chips = activeChips();
   const chipHtml = chips.map((chip) => `<span class="cs-badge cs-src">${escapeHtml(chip)}</span>`).join('');
   const capped = options.capped ? '+' : '';
-  return `<p class="cs-count"><strong>${nf.format(count)}${capped} case${count === 1 && !options.capped ? '' : 's'}</strong><span>${nf.format(total)} indexed</span><span>${escapeHtml(options.note || 'case profiles load on demand')}</span>${chipHtml}${caseStateLegendHtml()}</p>`;
+  const note = options.note ? `<span>${escapeHtml(options.note)}</span>` : '';
+  return `<p class="cs-count"><strong>${nf.format(count)}${capped} case${count === 1 && !options.capped ? '' : 's'}</strong><span>${nf.format(total)} indexed</span>${note}${chipHtml}${caseStateLegendHtml()}</p>`;
 }
 
 function renderDirectoryBrowse(filters) {
@@ -1234,7 +1235,7 @@ function renderDirectoryBrowse(filters) {
       ${locations}
     </details>`;
   }).join('');
-  $('cs-body').innerHTML = `${resultCountHtml(count, state.directory.case_count, { note: 'expand a year to load its case rows' })}${body || '<div class="cs-empty">No matching case groups.</div>'}`;
+  $('cs-body').innerHTML = `${resultCountHtml(count, state.directory.case_count)}${body || '<div class="cs-empty">No matching case groups.</div>'}`;
 }
 
 async function hydrateDirectoryYearGroup(details) {
@@ -1466,7 +1467,7 @@ function renderCaseResults(rows, options = {}) {
   setStatus('loaded', `${nf.format(rows.length)} search results`);
   const count = resultCountHtml(rows.length, state.directory?.case_count || state.cases.length, {
     capped: options.capped,
-    note: options.scanned ? `${nf.format(options.scanned)} compact rows scanned` : 'case profiles load on demand',
+    note: options.scanned ? `${nf.format(options.scanned)} compact rows scanned` : '',
   });
   const body = rows.length ? renderCaseGroups(rows) : '<div class="cs-empty">No matching cases.</div>';
   $('cs-body').innerHTML = `${count}${body}`;
