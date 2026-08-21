@@ -2027,10 +2027,12 @@ function renderSourceRows(rows, emptyText, options = {}) {
     <h3>${escapeHtml(title)}</h3>
     <div class="cs-line-list">${rows.map((row, index) => {
       const href = safeHttpHref(row.url);
+      const sub = sourceRowSub(row);
+      const showSub = sub && text(sub) !== text(row.url) && text(sub) !== href;
       return `<div class="cs-row">
       <small>${escapeHtml([row.section, row.tabKey, row.rowIndex ? `row ${row.rowIndex}` : `row ${index + 1}`].filter(Boolean).join(' | '))}</small>
       <div class="cs-field"><span class="cs-field-lead">${escapeHtml(sourceRowTitle(row))}</span></div>
-      ${sourceRowSub(row) ? `<div class="cs-field">${escapeHtml(sourceRowSub(row))}</div>` : ''}
+      ${showSub ? `<div class="cs-field">${escapeHtml(sub)}</div>` : ''}
       ${href ? `<div class="cs-field"><a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(href)}</a></div>` : ''}
     </div>`;
     }).join('')}</div>
