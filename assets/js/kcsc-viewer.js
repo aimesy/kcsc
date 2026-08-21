@@ -7,7 +7,6 @@ import {
   createDirectoryClient,
   directoryGroups,
   directorySourceBatches,
-  filingYear,
   rowMatchesGroup,
   statusGroup,
   uniqueDirectorySources,
@@ -1626,7 +1625,7 @@ function renderCaseMetaFields(row) {
   return [
     caseField('Filed', filed),
     caseField('Nature', row.cause_of_action),
-    caseField('Status', row.status),
+    caseField('Status', row.status_group || statusGroup(row.status)),
     caseField('Type', row.case_type),
     caseField('Loc', row.location_code),
     caseField('ROA', num(row.docket_entry_count) ? nf.format(num(row.docket_entry_count)) : ''),
