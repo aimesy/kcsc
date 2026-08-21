@@ -347,6 +347,52 @@
       padding: 12px 14px;
       margin: 12px;
     }
+    .cs-load-progress {
+      display: grid;
+      grid-template-rows: auto auto 6px;
+      gap: 10px;
+      min-height: 112px;
+      margin: 12px 0;
+      padding: 16px;
+      border: 1px solid var(--rule);
+      background: var(--paper-2);
+    }
+    .cs-load-progress-phase {
+      min-width: 0;
+      color: var(--ink);
+      font-size: 0.82rem;
+      font-weight: 700;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .cs-load-progress-stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px 16px;
+      color: var(--ink-3);
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      line-height: 1.35;
+    }
+    .cs-load-progress-track {
+      position: relative;
+      overflow: hidden;
+      background: var(--rule-2);
+    }
+    .cs-load-progress-bar {
+      width: 0;
+      height: 100%;
+      background: var(--ok);
+      transition: width 120ms linear;
+    }
+    .cs-load-progress-track.is-unknown .cs-load-progress-bar {
+      width: 32%;
+      animation: cs-load-progress-unknown 1.3s ease-in-out infinite alternate;
+    }
+    @keyframes cs-load-progress-unknown {
+      from { transform: translateX(-100%); }
+      to { transform: translateX(310%); }
+    }
     .cs-count {
       display: flex;
       align-items: baseline;
@@ -622,7 +668,7 @@
       display: inline-block;
       font-size: 0.68rem;
       padding: 1px 6px;
-      border-radius: 999px;
+      border-radius: 2px;
       background: var(--paper-2);
       color: var(--ink-2);
       border: 1px solid var(--rule);
@@ -904,12 +950,18 @@
       .cs-record-table:not(.cs-document-table) th:nth-child(n+4),
       .cs-record-table:not(.cs-document-table) td:nth-child(n+4) { display: none; }
     }
+    @media (max-width: 520px) {
+      .cs-load-progress { min-height: 154px; padding: 12px; }
+      .cs-load-progress-stats { grid-template-columns: 1fr; }
+    }
   </style>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/theme.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/theme-bar.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/bug-report.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/font-system.css">
   <script src="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/theme.js" defer></script>
   <script src="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/bug-report.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/font-system.js" defer></script>
 </head>
 <body>
   <div id="case-search-panel" class="cs-panel">
@@ -995,7 +1047,6 @@
             </select>
           </div>
         </div>
-        <div class="cs-filter-note">Cases search scans the lightweight archive index; full docket, party, counsel, and raw source rows load when a case is opened. Namespaces supported in the search box: <code>case:</code> <code>title:</code> <code>cause:</code> <code>status:</code> <code>node:</code> <code>from:</code> and <code>to:</code>.</div>
       </div>
       <div class="cs-tabstrip" id="cs-tabstrip" role="tablist" hidden></div>
     </div>
@@ -1003,6 +1054,6 @@
       <div class="cs-hint">Loading archived dockets...</div>
     </div>
   </div>
-  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260712-cleanup-1"></script>
+  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260821-directory-1"></script>
 </body>
 </html>

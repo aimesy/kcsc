@@ -22,11 +22,13 @@ const sharedThemeAssets = new Set([
   'theme.css',
   'theme-bar.css',
   'bug-report.css',
+  'font-system.css',
   'theme.js',
   'bug-report.js',
+  'font-system.js',
 ]);
 const sharedThemeMatches = [...index.matchAll(
-  /https:\/\/cdn\.jsdelivr\.net\/gh\/aimesy\/themes@([0-9a-f]{40})\/src\/(theme\.css|theme-bar\.css|bug-report\.css|theme\.js|bug-report\.js)/g,
+  /https:\/\/cdn\.jsdelivr\.net\/gh\/aimesy\/themes@([0-9a-f]{40})\/src\/(theme\.css|theme-bar\.css|bug-report\.css|font-system\.css|theme\.js|bug-report\.js|font-system\.js)/g,
 )];
 const allSharedThemeMatches = [...index.matchAll(
   /https:\/\/cdn\.jsdelivr\.net\/gh\/aimesy\/themes[^"' \s>]*/g,
@@ -34,7 +36,7 @@ const allSharedThemeMatches = [...index.matchAll(
 
 assert(index.includes('<title>KCSC Case Archive</title>'), 'index title must identify KCSC');
 assert(index.includes('<meta name="theme-color" content="#24211d">'), 'theme-color metadata is missing');
-assert(sharedThemeMatches.length === sharedThemeAssets.size, 'shared theme asset set must contain exactly five pinned assets');
+assert(sharedThemeMatches.length === sharedThemeAssets.size, 'shared theme asset set must contain exactly seven pinned assets');
 assert(allSharedThemeMatches.length === sharedThemeAssets.size, 'unexpected shared theme asset reference remains');
 assert(
   sharedThemeAssets.size === new Set(sharedThemeMatches.map((match) => match[2])).size
@@ -43,7 +45,7 @@ assert(
 );
 assert(new Set(sharedThemeMatches.map((match) => match[1])).size === 1, 'shared theme assets must use one commit SHA');
 assert(!/aimesy\/themes(?:\/|@(master|main|latest)\/)/i.test(index), 'mutable or unversioned shared theme reference remains');
-assert(!index.includes('font-system.'), 'unused shared font-system assets must not load');
+assert(index.includes('/src/font-system.css') && index.includes('/src/font-system.js'), 'shared font controls must mirror SFSC');
 assert((index.match(/\bdata-theme-toggle\b/g) || []).length === 1, 'viewer must contain exactly one theme toggle');
 assert((index.match(/\bamyc-theme-bar\b/g) || []).length === 1, 'viewer must contain exactly one shared theme bar');
 assert(index.indexOf('</style>') < index.indexOf('/src/theme.css'), 'shared theme CSS must load after inline viewer CSS');
@@ -60,10 +62,23 @@ assert(index.includes('value="parties"') && index.includes('value="counsel"'), '
 assert(app.includes("raw.githubusercontent.com/aimesy/kcsc-data/master"), 'viewer is not wired to kcsc-data');
 assert(app.includes("setAttribute('aria-expanded'"), 'scope button must update aria-expanded');
 assert(app.includes('data/manifest.json'), 'data manifest load is missing');
-assert(app.includes('state.manifest?.archive?.cases_index_parts || []'), 'sharded case index load is missing');
+assert(app.includes('state.manifest?.archive?.case_directory'), 'compact case directory load is missing');
+assert(app.includes('validateDirectoryManifest'), 'case directory validation is missing');
+assert(app.includes('createDirectoryClient'), 'shared case shard cache is missing');
+assert(app.includes('directoryBrowseEligible'), 'lazy case directory browse is missing');
+assert(app.includes('hydrateDirectoryYearGroup'), 'on-demand year hydration is missing');
+assert(app.includes('const hasDirectory = await loadCaseDirectoryManifest()'), 'case directory must load before the legacy index fallback');
+assert(app.includes('if (!hasDirectory)'), 'legacy case index must only load when the directory is unavailable');
+assert(app.includes('state.manifest?.archive?.cases_index_parts || []'), 'sharded case index fallback is missing');
 assert(app.includes("state.manifest?.archive?.cases_index || 'archive/cases-index.ndjson'"), 'legacy case index fallback is missing');
 assert(app.includes('const batchSize = 4'), 'case index shard concurrency must remain bounded');
-assert(app.includes('loadCaseIndexRows'), 'case index startup loader is missing');
+assert(app.includes('CASE_SEARCH_RESULT_LIMIT = 300'), 'case search display cap must match SFSC');
+assert(app.includes('CASE_SEARCH_CONCURRENCY = 6'), 'case search concurrency must remain bounded');
+assert(app.includes('scheduleResults(delay = 260)'), 'case search debounce must match SFSC');
+assert(app.includes('searchSeq === state.searchSeq'), 'stale case search guard is missing');
+assert(app.includes('createLoadProgress'), 'visible loading progress is missing');
+assert(app.includes('REQUEST_TIMEOUT_MS = 20000'), 'case request timeout must match SFSC');
+assert(app.includes('safeHttpHref'), 'external case links must be protocol checked');
 assert(!app.includes("await registerParquet(tableName, path)"), 'viewer must not materialize all parquet tables at startup');
 assert(app.includes('archive/cases/${encodeURIComponent(canonical)}.json'), 'lazy per-case JSON load is missing');
 assert(!app.includes('globalTextSearch'), 'dead global text search flag must not remain');

@@ -1,5 +1,24 @@
+import {
+  createLoadProgress,
+  fetchJsonWithProgress,
+  formatLoadBytes,
+} from './load-progress.js';
+import {
+  createDirectoryClient,
+  directoryGroups,
+  directorySourceBatches,
+  filingYear,
+  rowMatchesGroup,
+  statusGroup,
+  uniqueDirectorySources,
+  validateDirectoryManifest,
+} from './kcsc-directory.js';
+
 const DUCKDB_ESM_URL = 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev45.0/+esm';
 const REMOTE_DATA_BASE = 'https://raw.githubusercontent.com/aimesy/kcsc-data/master/';
+const CASE_SEARCH_RESULT_LIMIT = 300;
+const CASE_SEARCH_CONCURRENCY = 6;
+const REQUEST_TIMEOUT_MS = 20000;
 
 const $ = (id) => document.getElementById(id);
 const nf = new Intl.NumberFormat('en-US');
@@ -22,6 +41,10 @@ const state = {
   db: null,
   conn: null,
   bound: false,
+  directory: null,
+  directoryClient: null,
+  directoryGroupRows: new Map(),
+  directoryHydratedRows: new Map(),
   cases: [],
   docketRows: [],
   partyRows: [],
@@ -30,8 +53,10 @@ const state = {
   caseByNumber: new Map(),
   partyEntities: [],
   counselEntities: [],
-  entitiesLoaded: false,
-  entitiesPromise: null,
+  entityLoaded: { parties: false, counsel: false },
+  entityPromises: new Map(),
+  docketLoaded: false,
+  docketPromise: null,
   nextHearings: new Map(),
   docketIndex: new Map(),
   partyIndex: new Map(),
@@ -43,6 +68,9 @@ const state = {
   caseGroupRows: new Map(),
   entityCaseFilter: null,
   scope: 'cases',
+  searchSeq: 0,
+  searchTimer: null,
+  caseOpenSeq: 0,
 };
 
 function text(value) {
@@ -51,6 +79,12 @@ function text(value) {
 
 function norm(value) {
   return text(value).toLowerCase();
+}
+
+function matchesTerms(value, query) {
+  const haystack = norm(value);
+  const terms = norm(query).match(/[a-z0-9]+/g) || [];
+  return terms.every((term) => haystack.includes(term));
 }
 
 function escapeHtml(value) {
@@ -67,6 +101,31 @@ function normalizeBase(base) {
   const raw = text(base);
   if (!raw) return '';
   return raw.endsWith('/') ? raw : `${raw}/`;
+}
+
+function safeHttpHref(value) {
+  try {
+    const raw = text(value);
+    if (!raw) return '';
+    const url = new URL(raw, location.href);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function normalizeCaseKey(value) {
+  return text(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+async function fetchWithTimeout(url, init = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function dataUrl(path) {
@@ -117,7 +176,7 @@ function tableRowsCount(name) {
 }
 
 function archiveCountText() {
-  return nf.format(num(state.manifest?.archive?.cases || tableRowsCount('cases') || state.cases.length));
+  return nf.format(num(state.manifest?.archive?.cases || tableRowsCount('cases') || state.directory?.case_count || state.cases.length));
 }
 
 function archiveReadyText() {
@@ -166,16 +225,60 @@ function setStatus(label, detail = '') {
   if (detail) $('cs-entity-meta').textContent = detail;
 }
 
+function mountLoadProgress(root, progress, options = {}) {
+  root.innerHTML = `<div class="cs-load-progress" role="status" aria-live="polite" aria-atomic="true">
+    <div class="cs-load-progress-phase"></div>
+    <div class="cs-load-progress-stats"><span data-load-bytes></span><span data-load-shards></span><span data-load-records></span></div>
+    <div class="cs-load-progress-track" role="progressbar" aria-label="${escapeHtml(options.ariaLabel || 'KCSC data loaded')}"><div class="cs-load-progress-bar"></div></div>
+  </div>`;
+  const phaseEl = root.querySelector('.cs-load-progress-phase');
+  const bytesEl = root.querySelector('[data-load-bytes]');
+  const shardsEl = root.querySelector('[data-load-shards]');
+  const recordsEl = root.querySelector('[data-load-records]');
+  const track = root.querySelector('.cs-load-progress-track');
+  const bar = root.querySelector('.cs-load-progress-bar');
+  return progress.subscribe((snapshot) => {
+    phaseEl.textContent = snapshot.phase;
+    bytesEl.textContent = snapshot.bytesTotal == null
+      ? `${formatLoadBytes(snapshot.bytesLoaded)} downloaded`
+      : `${formatLoadBytes(snapshot.bytesLoaded)} / ${formatLoadBytes(snapshot.bytesTotal)}`;
+    shardsEl.textContent = snapshot.shardsTotal == null
+      ? `${nf.format(snapshot.shardsLoaded)} files`
+      : `${nf.format(snapshot.shardsLoaded)} / ${nf.format(snapshot.shardsTotal)} files`;
+    recordsEl.textContent = snapshot.recordsTotal == null
+      ? `${nf.format(snapshot.recordsLoaded)} records`
+      : `${nf.format(snapshot.recordsLoaded)} / ${nf.format(snapshot.recordsTotal)} records`;
+    const knownTotal = snapshot.bytesTotal != null && snapshot.bytesTotal > 0;
+    track.classList.toggle('is-unknown', !knownTotal);
+    if (knownTotal) {
+      const width = Math.min(100, Math.max(0, (snapshot.bytesLoaded / snapshot.bytesTotal) * 100));
+      bar.style.width = `${width}%`;
+      track.setAttribute('aria-valuemin', '0');
+      track.setAttribute('aria-valuemax', String(snapshot.bytesTotal));
+      track.setAttribute('aria-valuenow', String(Math.min(snapshot.bytesLoaded, snapshot.bytesTotal)));
+    } else {
+      bar.style.width = '';
+      track.removeAttribute('aria-valuemin');
+      track.removeAttribute('aria-valuemax');
+      track.removeAttribute('aria-valuenow');
+    }
+  });
+}
+
+function showBodyError(message, retry = '') {
+  $('cs-body').innerHTML = `<div class="cs-error">${escapeHtml(message)}${retry ? ` <button type="button" class="hbtn" data-retry-action="${escapeHtml(retry)}">Retry</button>` : ''}</div>`;
+}
+
 async function fetchJsonFrom(base, path) {
   const url = new URL(path, new URL(base, location.href)).href;
-  const res = await fetch(url, { cache: 'no-cache' });
+  const res = await fetchWithTimeout(url, { cache: 'no-cache' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return { json: await res.json(), url };
 }
 
 async function fetchTextFrom(base, path) {
   const url = new URL(path, new URL(base, location.href)).href;
-  const res = await fetch(url, { cache: 'no-cache' });
+  const res = await fetchWithTimeout(url, { cache: 'no-cache' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return { text: await res.text(), url };
 }
@@ -218,15 +321,41 @@ async function ensureDuckDB() {
   return duckdb;
 }
 
-async function fetchBuffer(path) {
-  const res = await fetch(dataUrl(path), { cache: 'no-cache' });
+async function fetchBuffer(path, progress = null) {
+  const res = await fetchWithTimeout(dataUrl(path), { cache: 'no-cache' }, 60000);
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${path}`);
-  return new Uint8Array(await res.arrayBuffer());
+  const rawLength = res.headers.get('Content-Length');
+  const total = /^\d+$/.test(text(rawLength)) ? Number(rawLength) : null;
+  let loaded = 0;
+  const chunks = [];
+  if (res.body?.getReader) {
+    const reader = res.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.byteLength;
+      progress?.update({ bytesLoaded: loaded, bytesTotal: total });
+    }
+  } else {
+    const value = new Uint8Array(await res.arrayBuffer());
+    chunks.push(value);
+    loaded = value.byteLength;
+    progress?.update({ bytesLoaded: loaded, bytesTotal: total });
+  }
+  const out = new Uint8Array(loaded);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  });
+  return out;
 }
 
-async function registerParquet(tableName, path) {
+async function registerParquet(tableName, path, progress = null) {
   const fname = `${tableName}.parquet`;
-  const buf = await fetchBuffer(path);
+  const buf = await fetchBuffer(path, progress);
+  progress?.update({ phase: `Opening ${tableName} table` });
   await state.db.registerFileBuffer(fname, buf);
   await state.conn.query(`CREATE OR REPLACE TABLE ${tableName} AS SELECT * FROM '${fname}'`);
 }
@@ -247,10 +376,19 @@ async function loadTableRows(tableName, query) {
   return rowsFromArrow(table);
 }
 
-async function loadEntityParquetRows(entityTableName, parquetPath) {
+async function loadEntityParquetRows(entityTableName, parquetPath, progress = null) {
+  progress?.update({ phase: 'Initialising database engine' });
   await ensureDuckDB();
-  await registerParquet(entityTableName, parquetPath);
-  return loadTableRows(entityTableName);
+  progress?.update({ phase: `Downloading ${entityTableName} table` });
+  await registerParquet(entityTableName, parquetPath, progress);
+  progress?.update({ phase: `Reading ${entityTableName} rows` });
+  const rows = await loadTableRows(entityTableName);
+  progress?.update({
+    phase: `${entityTableName} index ready`,
+    shardsLoaded: 1,
+    recordsLoaded: rows.length,
+  });
+  return rows;
 }
 
 async function loadCaseIndexRows() {
@@ -280,6 +418,49 @@ async function loadCaseIndexRows() {
     .split(/\r?\n/)
     .filter((line) => line.trim())
     .map((line) => JSON.parse(line));
+}
+
+async function loadCaseDirectoryManifest() {
+  const path = text(state.manifest?.archive?.case_directory);
+  if (!path) return false;
+  const progress = createLoadProgress({
+    phase: 'Loading case directory',
+    shardsTotal: 1,
+    recordsTotal: num(state.manifest?.archive?.cases),
+  });
+  const unsubscribe = mountLoadProgress($('cs-body'), progress, {
+    ariaLabel: 'KCSC case directory loaded',
+  });
+  try {
+    const result = await fetchJsonWithProgress(dataUrl(path), { cache: 'no-cache' }, {
+      fetchImpl: (input, init) => fetchWithTimeout(input, init),
+      onProgress: ({ loaded, total }) => progress.update({ bytesLoaded: loaded, bytesTotal: total }),
+      onPhase: () => progress.update({ phase: 'Validating case directory' }),
+    });
+    const directory = validateDirectoryManifest(
+      result.data,
+      num(state.manifest?.archive?.cases),
+    );
+    if (text(directory.built_at) !== text(state.manifest?.generated_at)) {
+      throw new Error('case directory generation does not match the data manifest');
+    }
+    state.directory = directory;
+    state.directoryClient = createDirectoryClient({
+      base: state.dataBase,
+      locationHref: location.href,
+      fetchImpl: (input, init) => fetchWithTimeout(input, init, 60000),
+    });
+    progress.update({
+      phase: 'Case directory ready',
+      bytesLoaded: result.bytesLoaded,
+      bytesTotal: result.bytesTotal,
+      shardsLoaded: 1,
+      recordsLoaded: directory.case_count,
+    });
+    return true;
+  } finally {
+    unsubscribe();
+  }
 }
 
 function appendIndex(map, key, value) {
@@ -338,13 +519,30 @@ function enrichCases(caseRows) {
     location_code: caseLocation(row),
     portal_node_id: casePortalNode(row),
     portal_case_id: casePortalId(row),
+    status_group: statusGroup(row.status_group || row.status),
     has_document_index_rows: caseHasDocumentIndexRows(row),
     next_hearing: row.next_hearing || state.nextHearings.get(text(row.case_number)) || null,
   }));
 }
 
+function rememberCases(caseRows) {
+  const remembered = [];
+  for (const row of enrichCases(caseRows)) {
+    const key = normalizeCaseKey(row.case_number);
+    if (!key) continue;
+    const previous = state.caseByNumber.get(key);
+    const merged = previous ? { ...previous, ...row } : row;
+    state.caseByNumber.set(key, merged);
+    const displayKey = normalizeCaseKey(merged.display_case_number);
+    if (displayKey) state.caseByNumber.set(displayKey, merged);
+    if (!previous) state.cases.push(merged);
+    remembered.push(merged);
+  }
+  return remembered;
+}
+
 function caseRowFor(caseNumber) {
-  return state.caseByNumber.get(text(caseNumber)) || null;
+  return state.caseByNumber.get(normalizeCaseKey(caseNumber)) || null;
 }
 
 function normalizeEntityName(value) {
@@ -458,28 +656,29 @@ function buildCounselEntities() {
 }
 
 function sortEntities(a, b) {
-  return (b.cases.length - a.cases.length)
+  return (b.caseNumbers.length - a.caseNumbers.length)
     || (b.rowCount - a.rowCount)
     || text(a.displayName).localeCompare(text(b.displayName));
 }
 
 async function loadData() {
+  bindEvents();
   setStatus('loading data', 'reading manifest');
   await resolveDataBase();
-  setStatus('loading index', 'reading case archive index');
-  const caseRows = await loadCaseIndexRows();
   state.calendarRows = [];
   state.docketRows = [];
   state.partyRows = [];
   state.attorneyRows = [];
-
-  buildSearchIndexes();
-  state.cases = enrichCases(caseRows);
-  state.caseByNumber = new Map(state.cases.map((row) => [text(row.case_number), row]));
-  state.partyEntities = buildPartyEntities();
-  state.counselEntities = buildCounselEntities();
+  setStatus('loading directory', 'reading compact case groups');
+  const hasDirectory = await loadCaseDirectoryManifest();
+  if (!hasDirectory) {
+    setStatus('loading index', 'legacy archive index');
+    const caseRows = await loadCaseIndexRows();
+    state.cases = [];
+    state.caseByNumber.clear();
+    rememberCases(caseRows);
+  }
   populateFilters();
-  bindEvents();
 
   const initialCase = requestedCaseFromLocation();
   if (initialCase) {
@@ -490,25 +689,76 @@ async function loadData() {
   setStatus('loaded', archiveReadyText());
 }
 
-async function ensureEntityData() {
-  if (state.entitiesLoaded) return;
-  if (state.entitiesPromise) return state.entitiesPromise;
-  state.entitiesPromise = (async () => {
+async function ensureEntityData(kind) {
+  if (state.entityLoaded[kind]) return;
+  if (state.entityPromises.has(kind)) return state.entityPromises.get(kind);
+  const promise = (async () => {
     const tables = state.manifest?.tables || {};
-    setStatus('loading entities', 'loading party and counsel indexes');
-    if (tables.parties?.path) state.partyRows = await loadEntityParquetRows('parties', tables.parties.path);
-    if (tables.attorneys?.path) state.attorneyRows = await loadEntityParquetRows('attorneys', tables.attorneys.path);
+    const tableName = kind === 'parties' ? 'parties' : 'attorneys';
+    const path = tables[tableName]?.path;
+    if (!path) throw new Error(`${tableName} table is unavailable`);
+    setStatus(`loading ${kind}`, `loading ${scopeLabel(kind).toLowerCase()} index`);
+    const progress = createLoadProgress({
+      phase: `Loading ${scopeLabel(kind).toLowerCase()} index`,
+      shardsTotal: 1,
+      recordsTotal: tableRowsCount(tableName),
+    });
+    const unsubscribe = mountLoadProgress($('cs-body'), progress, {
+      ariaLabel: `${scopeLabel(kind)} index loaded`,
+    });
+    let rows;
+    try {
+      rows = await loadEntityParquetRows(tableName, path, progress);
+    } finally {
+      unsubscribe();
+    }
+    if (kind === 'parties') {
+      state.partyRows = rows;
+      state.partyEntities = buildPartyEntities();
+    } else {
+      state.attorneyRows = rows;
+      state.counselEntities = buildCounselEntities();
+    }
     buildSearchIndexes();
-    state.partyEntities = buildPartyEntities();
-    state.counselEntities = buildCounselEntities();
-    state.entitiesLoaded = true;
+    state.entityLoaded[kind] = true;
     setStatus('loaded', archiveReadyText());
   })().catch((err) => {
-    state.entitiesPromise = null;
     setStatus('entity load error');
     throw err;
+  }).finally(() => {
+    state.entityPromises.delete(kind);
   });
-  return state.entitiesPromise;
+  state.entityPromises.set(kind, promise);
+  return promise;
+}
+
+async function ensureDocketData() {
+  if (state.docketLoaded) return;
+  if (state.docketPromise) return state.docketPromise;
+  state.docketPromise = (async () => {
+    const path = state.manifest?.tables?.docket_entries?.path;
+    if (!path) throw new Error('docket entry table is unavailable');
+    setStatus('loading docket search', 'loading docket text index');
+    const progress = createLoadProgress({
+      phase: 'Loading docket text index',
+      shardsTotal: 1,
+      recordsTotal: tableRowsCount('docket_entries'),
+    });
+    const unsubscribe = mountLoadProgress($('cs-body'), progress, {
+      ariaLabel: 'Docket text index loaded',
+    });
+    try {
+      state.docketRows = await loadEntityParquetRows('docket_entries', path, progress);
+      buildSearchIndexes();
+      state.docketLoaded = true;
+    } finally {
+      unsubscribe();
+    }
+    setStatus('loaded', archiveReadyText());
+  })().finally(() => {
+    state.docketPromise = null;
+  });
+  return state.docketPromise;
 }
 
 function provenanceDataSource() {
@@ -524,10 +774,11 @@ function optionList(values, allLabel) {
 }
 
 function populateFilters() {
-  $('type-filter').innerHTML = optionList(state.cases.map((r) => r.case_type), 'All types');
-  $('location-filter').innerHTML = optionList(state.cases.map((r) => r.location_code), 'All locations');
-  $('status-filter').innerHTML = optionList(state.cases.map((r) => r.status), 'All statuses');
-  $('node-filter').innerHTML = optionList(state.cases.map((r) => r.portal_node_id), 'All nodes');
+  const values = state.directory?.filter_values || {};
+  $('type-filter').innerHTML = optionList(values.case_types || state.cases.map((r) => r.case_type), 'All types');
+  $('location-filter').innerHTML = optionList(values.locations || state.cases.map((r) => r.location_code), 'All locations');
+  $('status-filter').innerHTML = optionList(values.status_groups || state.cases.map((r) => statusGroup(r.status)), 'All statuses');
+  $('node-filter').innerHTML = optionList(values.portal_nodes || state.cases.map((r) => r.portal_node_id), 'All nodes');
 }
 
 function scopeLabel(scope = state.scope) {
@@ -549,6 +800,12 @@ function scopePlaceholder(scope = state.scope) {
 function applyScopeUi(scope = state.scope) {
   $('cs-scope-label').textContent = scopeLabel(scope);
   $('cs-search').placeholder = scopePlaceholder(scope);
+  const caseScope = scope === 'cases';
+  $('cs-filter-btn').hidden = !caseScope;
+  if (!caseScope) {
+    $('cs-filter-panel').hidden = true;
+    $('cs-filter-btn').classList.remove('active');
+  }
   document.querySelectorAll('input[name="cs-scope"]').forEach((radio) => {
     radio.checked = radio.value === scope;
   });
@@ -562,6 +819,11 @@ function findEntity(kind, key) {
   if (!kind || !key) return null;
   const rows = kind === 'parties' ? state.partyEntities : state.counselEntities;
   return rows.find((row) => row.key === key) || null;
+}
+
+function scheduleResults(delay = 260) {
+  clearTimeout(state.searchTimer);
+  state.searchTimer = setTimeout(() => renderResults(), delay);
 }
 
 function bindEvents() {
@@ -588,10 +850,10 @@ function bindEvents() {
 
   $('cs-search').addEventListener('input', () => {
     clearEntityCaseFilter();
-    renderResults();
+    scheduleResults();
   });
   ['type-filter', 'location-filter', 'status-filter', 'from-date', 'to-date', 'sort-filter', 'node-filter', 'content-filter']
-    .forEach((id) => $(id).addEventListener('change', renderResults));
+    .forEach((id) => $(id).addEventListener('change', () => scheduleResults(0)));
 
   $('cs-scope-btn').addEventListener('click', () => {
     const menu = $('cs-scope-menu');
@@ -607,11 +869,10 @@ function bindEvents() {
       $('cs-scope-menu').classList.remove('open');
       $('cs-scope-btn').setAttribute('aria-expanded', 'false');
       if (state.scope === 'parties' || state.scope === 'counsel') {
-        $('cs-body').innerHTML = '<div class="cs-loading">Loading party and counsel indexes.</div>';
         try {
-          await ensureEntityData();
+          await ensureEntityData(state.scope);
         } catch (err) {
-          $('cs-body').innerHTML = `<div class="cs-error">${escapeHtml(err.message || String(err))}</div>`;
+          showBodyError(err.message || String(err), `entity:${state.scope}`);
           return;
         }
       }
@@ -634,7 +895,7 @@ function bindEvents() {
         kind: entity.kind,
         key: entity.key,
         label: entity.displayName,
-        caseNumbers: new Set(entity.caseNumbers),
+        caseNumbers: new Set(entity.caseNumbers.map(normalizeCaseKey).filter(Boolean)),
       } : null;
       state.scope = 'cases';
       applyScopeUi(state.scope);
@@ -653,7 +914,28 @@ function bindEvents() {
     const tab = event.target.closest('[data-cs-tab]');
     if (tab) {
       state.selectedTab = tab.getAttribute('data-cs-tab');
+      pushCaseHash(state.selectedCaseNumber, state.selectedTab, { replace: true });
       renderDetail();
+      return;
+    }
+
+    const retry = event.target.closest('[data-retry-action]');
+    if (retry) {
+      const action = retry.getAttribute('data-retry-action') || '';
+      if (action === 'search') renderResults();
+      else if (action === 'case' && state.selectedCaseNumber) openCase(state.selectedCaseNumber, { push: false });
+      else if (action === 'reload') location.reload();
+      else if (action.startsWith('entity:')) {
+        const kind = action.split(':')[1];
+        ensureEntityData(kind).then(renderResults).catch((err) => showBodyError(err.message || String(err), action));
+      }
+      return;
+    }
+
+    const directoryRetry = event.target.closest('[data-directory-retry]');
+    if (directoryRetry) {
+      const details = directoryRetry.closest('[data-directory-group-key]');
+      if (details) hydrateDirectoryYearGroup(details);
       return;
     }
 
@@ -668,7 +950,8 @@ function bindEvents() {
   });
 
   document.addEventListener('toggle', (event) => {
-    hydrateCaseYearGroup(event.target);
+    if (event.target?.hasAttribute?.('data-directory-group-key')) hydrateDirectoryYearGroup(event.target);
+    else hydrateCaseYearGroup(event.target);
   }, true);
 
   window.addEventListener('popstate', async () => {
@@ -692,18 +975,26 @@ function requestedCaseFromLocation() {
   return hashParams.get('case') || '';
 }
 
-function pushCaseHash(caseNumber) {
+function requestedTabFromLocation() {
+  const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
+  return text(hashParams.get('tab')) || 'summary';
+}
+
+function pushCaseHash(caseNumber, tab = '', options = {}) {
   const url = new URL(location.href);
   const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
   hashParams.set('case', caseNumber);
+  if (tab && tab !== 'summary') hashParams.set('tab', tab);
+  else hashParams.delete('tab');
   url.hash = hashParams.toString();
-  history.pushState(null, '', url);
+  history[options.replace ? 'replaceState' : 'pushState'](null, '', url);
 }
 
 function clearCaseHash() {
   const url = new URL(location.href);
   const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
   hashParams.delete('case');
+  hashParams.delete('tab');
   url.hash = hashParams.toString();
   history.pushState(null, '', url);
 }
@@ -724,6 +1015,7 @@ function caseSearchText(row) {
     row.case_title,
     row.case_type,
     row.status,
+    row.status_group || statusGroup(row.status),
     row.cause_of_action,
     row.location_code,
     row.portal_node_id,
@@ -749,7 +1041,7 @@ function namespaceText(row, field) {
   if (field === 'counsel') return state.counselIndex.get(key) || '';
   if (field === 'docket') return state.docketIndex.get(key) || '';
   if (field === 'cause') return row.cause_of_action;
-  if (field === 'status') return row.status;
+  if (field === 'status') return [row.status, row.status_group || statusGroup(row.status)].map(text).join(' ');
   if (field === 'node') return row.portal_node_id;
   return '';
 }
@@ -779,11 +1071,11 @@ function currentFilters() {
 
 function caseMatchesFilters(row, filters, includeFreeText = true) {
   const filed = text(row.filed_date || row.filing_date);
-  if (includeFreeText && filters.parsed.free && !norm(caseFullSearchText(row)).includes(filters.parsed.free)) return false;
+  if (includeFreeText && filters.parsed.free && !matchesTerms(caseFullSearchText(row), filters.parsed.free)) return false;
   if (filters.parsed.filters.some((filter) => !matchesNamespace(row, filter))) return false;
   if (filters.type && text(row.case_type) !== filters.type) return false;
   if (filters.loc && text(row.location_code) !== filters.loc) return false;
-  if (filters.status && text(row.status) !== filters.status) return false;
+  if (filters.status && text(row.status_group || statusGroup(row.status)) !== filters.status) return false;
   if (filters.node && text(row.portal_node_id) !== filters.node) return false;
   if (filters.from && (!filed || filed < filters.from)) return false;
   if (filters.to && (!filed || filed > filters.to)) return false;
@@ -809,13 +1101,16 @@ function sortCaseRows(rows, sort) {
 function filteredCases() {
   const filters = currentFilters();
   return sortCaseRows(state.cases.filter((row) => {
-    if (state.entityCaseFilter && !state.entityCaseFilter.caseNumbers.has(text(row.case_number))) return false;
+    if (state.entityCaseFilter && !state.entityCaseFilter.caseNumbers.has(normalizeCaseKey(row.case_number))) return false;
     return caseMatchesFilters(row, filters, true);
   }), filters.sort);
 }
 
 function entitySearchText(kind, entity) {
-  const caseText = entity.cases.map(caseFullSearchText).join(' ');
+  const caseText = [
+    ...(entity.caseNumbers || []),
+    ...(entity.cases || []).map(caseFullSearchText),
+  ].join(' ');
   if (kind === 'parties') {
     return [
       entity.displayName,
@@ -839,11 +1134,12 @@ function filteredEntities(kind) {
   const rows = (kind === 'parties' ? state.partyEntities : state.counselEntities)
     .map((entity) => ({
       ...entity,
-      visibleCases: sortCaseRows(entity.cases.filter((row) => caseMatchesFilters(row, filters, false)), filters.sort),
+      visibleCaseNumbers: entity.caseNumbers || [],
+      visibleCases: sortCaseRows(entity.cases || [], filters.sort),
     }))
-    .filter((entity) => entity.visibleCases.length)
-    .filter((entity) => !filters.parsed.free || norm(entitySearchText(kind, entity)).includes(filters.parsed.free));
-  return rows.sort((a, b) => (b.visibleCases.length - a.visibleCases.length)
+    .filter((entity) => entity.visibleCaseNumbers.length)
+    .filter((entity) => !filters.parsed.free || matchesTerms(entitySearchText(kind, entity), filters.parsed.free));
+  return rows.sort((a, b) => (b.visibleCaseNumbers.length - a.visibleCaseNumbers.length)
     || (b.rowCount - a.rowCount)
     || text(a.displayName).localeCompare(text(b.displayName)));
 }
@@ -851,6 +1147,10 @@ function filteredEntities(kind) {
 function activeChips() {
   const chips = [];
   const q = text($('cs-search').value);
+  if (state.scope !== 'cases') {
+    if (q) chips.push(`${$('cs-scope-label').textContent}: ${q}`);
+    return chips;
+  }
   const type = text($('type-filter').value);
   const loc = text($('location-filter').value);
   const status = text($('status-filter').value);
@@ -878,8 +1178,265 @@ function caseStateLegendHtml() {
   )).join('')}</span>`;
 }
 
+function directoryBrowseEligible(filters) {
+  return state.directory
+    && !filters.parsed.free
+    && !filters.parsed.filters.length
+    && !filters.status
+    && !filters.from
+    && !filters.to
+    && !filters.node
+    && !filters.content
+    && filters.sort === 'filed_desc'
+    && !state.entityCaseFilter;
+}
+
+function directoryGroupKey(group) {
+  return [group.caseType, group.location, group.year].join('|');
+}
+
+function resultCountHtml(count, total, options = {}) {
+  const chips = activeChips();
+  const chipHtml = chips.map((chip) => `<span class="cs-badge cs-src">${escapeHtml(chip)}</span>`).join('');
+  const capped = options.capped ? '+' : '';
+  return `<p class="cs-count"><strong>${nf.format(count)}${capped} case${count === 1 && !options.capped ? '' : 's'}</strong><span>${nf.format(total)} indexed</span><span>${escapeHtml(options.note || 'case profiles load on demand')}</span>${chipHtml}${caseStateLegendHtml()}</p>`;
+}
+
+function renderDirectoryBrowse(filters) {
+  const groups = directoryGroups(state.directory, {
+    caseType: filters.type,
+    location: filters.loc,
+  });
+  state.directoryGroupRows.clear();
+  const count = groups.reduce((sum, group) => sum + group.rows, 0);
+  const byType = grouped(groups, (group) => group.caseType);
+  const body = sortedEntries(byType).map(([caseType, typeGroups]) => {
+    const typeCount = typeGroups.reduce((sum, group) => sum + group.rows, 0);
+    const byLocation = grouped(typeGroups, (group) => group.location);
+    const locations = sortedEntries(byLocation).map(([location, locationGroups]) => {
+      const locationCount = locationGroups.reduce((sum, group) => sum + group.rows, 0);
+      const years = locationGroups.map((group) => {
+        const key = directoryGroupKey(group);
+        state.directoryGroupRows.set(key, group);
+        const year = group.year === 'unknown' ? 'Unknown year' : group.year;
+        return `<details class="cs-year-group" data-directory-group-key="${escapeHtml(key)}">
+          <summary class="cs-year-head"><span class="cs-year-tag">${escapeHtml(year)}</span><span class="cs-year-count">${nf.format(group.rows)} cases</span></summary>
+          <div data-directory-group-body></div>
+        </details>`;
+      }).join('');
+      return `<details class="cs-prefix-group" open>
+        <summary class="cs-prefix-head"><span class="cs-prefix-code">${escapeHtml(location)}</span><span class="cs-prefix-count">${nf.format(locationCount)} cases</span></summary>
+        ${years}
+      </details>`;
+    }).join('');
+    return `<details class="cs-type-group" open>
+      <summary class="cs-type-head"><span class="cs-type-tag">${escapeHtml(caseType.toUpperCase())}</span><span class="cs-type-count">${nf.format(typeCount)} cases</span></summary>
+      ${locations}
+    </details>`;
+  }).join('');
+  $('cs-body').innerHTML = `${resultCountHtml(count, state.directory.case_count, { note: 'expand a year to load its case rows' })}${body || '<div class="cs-empty">No matching case groups.</div>'}`;
+}
+
+async function hydrateDirectoryYearGroup(details) {
+  if (!details?.open || !details.hasAttribute('data-directory-group-key')) return;
+  const key = details.getAttribute('data-directory-group-key');
+  const group = state.directoryGroupRows.get(key);
+  const body = details.querySelector('[data-directory-group-body]');
+  if (!group || !body || body.dataset.hydrated === '1') return;
+  if (state.directoryHydratedRows.has(key)) {
+    try {
+      const rows = await state.directoryHydratedRows.get(key);
+      if (details.isConnected) {
+        body.innerHTML = `<ul class="cs-results">${rows.map(renderCaseRow).join('')}</ul>`;
+        body.dataset.hydrated = '1';
+      }
+    } catch {
+      // The original loader renders the actionable error.
+    }
+    return;
+  }
+
+  const sources = uniqueDirectorySources([group]);
+  const progress = createLoadProgress({
+    phase: `Loading ${group.caseType} ${group.location} ${group.year}`,
+    bytesTotal: sources.reduce((sum, source) => sum + num(source.size_bytes), 0),
+    shardsTotal: sources.length,
+    recordsTotal: sources.reduce((sum, source) => sum + num(source.rows), 0),
+  });
+  const unsubscribe = mountLoadProgress(body, progress, { ariaLabel: 'Case rows loaded' });
+  const promise = (async () => {
+    const bytesByPath = new Map();
+    let shardsLoaded = 0;
+    let recordsLoaded = 0;
+    const results = [];
+    for (const source of sources) {
+      const result = await state.directoryClient.loadSource(source, {
+        onProgress: ({ loaded }) => {
+          bytesByPath.set(source.path, loaded);
+          progress.update({ bytesLoaded: [...bytesByPath.values()].reduce((sum, value) => sum + value, 0) });
+        },
+        onPhase: () => progress.update({ phase: `Indexing ${group.year} case rows` }),
+      });
+      bytesByPath.set(source.path, result.bytesLoaded);
+      shardsLoaded += 1;
+      recordsLoaded += result.rows.length;
+      results.push(...result.rows);
+      progress.update({
+        bytesLoaded: [...bytesByPath.values()].reduce((sum, value) => sum + value, 0),
+        shardsLoaded,
+        recordsLoaded,
+      });
+    }
+    const unique = new Map();
+    for (const row of results) {
+      if (!rowMatchesGroup(row, group)) continue;
+      const rowKey = normalizeCaseKey(row.case_number);
+      if (rowKey) unique.set(rowKey, row);
+    }
+    if (unique.size !== group.rows) {
+      throw new Error(`case group expected ${nf.format(group.rows)} rows but found ${nf.format(unique.size)}`);
+    }
+    return sortCaseRows(rememberCases([...unique.values()]), 'filed_desc');
+  })();
+  state.directoryHydratedRows.set(key, promise);
+  try {
+    const rows = await promise;
+    state.directoryHydratedRows.set(key, rows);
+    if (details.isConnected) {
+      body.innerHTML = `<ul class="cs-results">${rows.map(renderCaseRow).join('')}</ul>`;
+      body.dataset.hydrated = '1';
+    }
+  } catch (error) {
+    state.directoryHydratedRows.delete(key);
+    if (details.isConnected) {
+      body.innerHTML = `<div class="cs-error">${escapeHtml(error.message || String(error))} <button type="button" class="hbtn" data-directory-retry="${escapeHtml(key)}">Retry</button></div>`;
+    }
+  } finally {
+    unsubscribe();
+  }
+}
+
+function searchNamespaceFields(filters) {
+  return new Set(filters.parsed.filters.map((filter) => filter.field));
+}
+
+async function prepareCaseSearch(filters) {
+  const fields = searchNamespaceFields(filters);
+  if (fields.has('party')) await ensureEntityData('parties');
+  if (fields.has('counsel')) await ensureEntityData('counsel');
+  if (fields.has('docket')) await ensureDocketData();
+}
+
+function caseSearchPrefix(filters) {
+  const caseFilter = filters.parsed.filters.find((filter) => filter.field === 'case');
+  const raw = text(caseFilter?.value || filters.parsed.free);
+  const normalized = normalizeCaseKey(raw);
+  return /^\d[A-Z0-9]{7,}$/.test(normalized) ? normalized.slice(0, 3) : '';
+}
+
+async function runCaseSearch(filters, searchSeq) {
+  const current = () => searchSeq === state.searchSeq && state.scope === 'cases';
+  try {
+    await prepareCaseSearch(filters);
+    if (!current()) return;
+    const groups = directoryGroups(state.directory, {
+      caseType: filters.type,
+      location: filters.loc,
+      from: filters.from || filters.parsed.filters.find((filter) => filter.field === 'from')?.value,
+      to: filters.to || filters.parsed.filters.find((filter) => filter.field === 'to')?.value,
+    });
+    let batches = directorySourceBatches(groups);
+    const prefix = caseSearchPrefix(filters);
+    if (prefix) {
+      batches = batches
+        .map((batch) => ({ ...batch, sources: batch.sources.filter((source) => text(source.prefix) === prefix) }))
+        .filter((batch) => batch.sources.length);
+    }
+    if (state.entityCaseFilter) {
+      const prefixes = new Set([...state.entityCaseFilter.caseNumbers].map((value) => normalizeCaseKey(value).slice(0, 3)));
+      batches = batches
+        .map((batch) => ({ ...batch, sources: batch.sources.filter((source) => prefixes.has(text(source.prefix))) }))
+        .filter((batch) => batch.sources.length);
+    }
+    const sources = batches.flatMap((batch) => batch.sources);
+
+    const progress = createLoadProgress({
+      phase: 'Searching compact case index',
+      bytesTotal: sources.reduce((sum, source) => sum + num(source.size_bytes), 0),
+      shardsTotal: sources.length,
+      recordsTotal: sources.reduce((sum, source) => sum + num(source.rows), 0),
+    });
+    const unsubscribe = mountLoadProgress($('cs-body'), progress, { ariaLabel: 'Case search progress' });
+    const bytesByPath = new Map();
+    const matches = new Map();
+    const errors = [];
+    let attemptedSources = 0;
+    let shardsLoaded = 0;
+    let recordsLoaded = 0;
+    const canStopEarly = filters.sort === 'filed_desc';
+    async function loadBatch(batch) {
+      let nextInBatch = 0;
+      async function worker() {
+        while (current() && nextInBatch < batch.sources.length) {
+          const source = batch.sources[nextInBatch++];
+          attemptedSources += 1;
+          try {
+            const result = await state.directoryClient.loadSource(source, {
+              onProgress: ({ loaded }) => {
+                bytesByPath.set(source.path, loaded);
+                progress.update({ bytesLoaded: [...bytesByPath.values()].reduce((sum, value) => sum + value, 0) });
+              },
+              onPhase: () => progress.update({ phase: `Filtering ${batch.year} compact case rows` }),
+            });
+            if (!current()) return;
+            bytesByPath.set(source.path, result.bytesLoaded);
+            shardsLoaded += 1;
+            recordsLoaded += result.rows.length;
+            for (const row of rememberCases(result.rows)) {
+              const key = normalizeCaseKey(row.case_number);
+              if (!key || matches.has(key)) continue;
+              if (state.entityCaseFilter && !state.entityCaseFilter.caseNumbers.has(key)) continue;
+              if (caseMatchesFilters(row, filters, true)) matches.set(key, row);
+            }
+            progress.update({
+              bytesLoaded: [...bytesByPath.values()].reduce((sum, value) => sum + value, 0),
+              shardsLoaded,
+              recordsLoaded,
+            });
+          } catch (error) {
+            errors.push(`${source.path}: ${error.message || error}`);
+          }
+        }
+      }
+      await Promise.all(Array.from({
+        length: Math.min(CASE_SEARCH_CONCURRENCY, Math.max(1, batch.sources.length)),
+      }, worker));
+    }
+    for (const batch of batches) {
+      if (!current()) break;
+      await loadBatch(batch);
+      if (canStopEarly && matches.size > CASE_SEARCH_RESULT_LIMIT) break;
+    }
+    unsubscribe();
+    if (!current()) return;
+    if (errors.length) throw new Error(`Case search was incomplete. ${errors[0]}`);
+    const sorted = sortCaseRows([...matches.values()], filters.sort);
+    const capped = sorted.length > CASE_SEARCH_RESULT_LIMIT || attemptedSources < sources.length;
+    renderCaseResults(sorted.slice(0, CASE_SEARCH_RESULT_LIMIT), {
+      capped,
+      scanned: recordsLoaded,
+    });
+  } catch (error) {
+    if (!current()) return;
+    setStatus('search error');
+    showBodyError(error.message || String(error), 'search');
+  }
+}
+
 function renderResults() {
-  if (!state.cases.length) return;
+  if (!state.directory && !state.cases.length) return;
+  clearTimeout(state.searchTimer);
+  const searchSeq = ++state.searchSeq;
   state.selectedCase = null;
   $('cs-tabstrip').hidden = true;
   applyScopeUi(state.scope);
@@ -887,24 +1444,37 @@ function renderResults() {
     renderEntityResults(state.scope);
     return;
   }
-  renderCaseResults();
-}
-
-function renderCaseResults() {
   $('cs-kicker').textContent = 'Cases';
   $('cs-entity-title').textContent = 'King County Superior Court';
   $('cs-entity-meta').textContent = archiveReadyText();
+  const filters = currentFilters();
+  if (directoryBrowseEligible(filters)) {
+    renderDirectoryBrowse(filters);
+    return;
+  }
+  if (state.directory) {
+    runCaseSearch(filters, searchSeq);
+    return;
+  }
+  renderCaseResults(filteredCases(), { scanned: state.cases.length });
+}
 
-  const rows = filteredCases();
-  const chips = activeChips();
-  const chipHtml = chips.map((chip) => `<span class="cs-badge cs-src">${escapeHtml(chip)}</span>`).join('');
-  const count = `<p class="cs-count"><strong>${nf.format(rows.length)} case${rows.length === 1 ? '' : 's'}</strong><span>${nf.format(state.cases.length)} indexed</span><span>detail rows load per case</span>${chipHtml}${caseStateLegendHtml()}</p>`;
+function renderCaseResults(rows, options = {}) {
+  $('cs-kicker').textContent = 'Cases';
+  $('cs-entity-title').textContent = 'King County Superior Court';
+  $('cs-entity-meta').textContent = archiveReadyText();
+  setStatus('loaded', `${nf.format(rows.length)} search results`);
+  const count = resultCountHtml(rows.length, state.directory?.case_count || state.cases.length, {
+    capped: options.capped,
+    note: options.scanned ? `${nf.format(options.scanned)} compact rows scanned` : 'case profiles load on demand',
+  });
   const body = rows.length ? renderCaseGroups(rows) : '<div class="cs-empty">No matching cases.</div>';
   $('cs-body').innerHTML = `${count}${body}`;
 }
 
 function renderEntityResults(kind) {
-  const rows = filteredEntities(kind);
+  const matches = filteredEntities(kind);
+  const rows = matches.slice(0, CASE_SEARCH_RESULT_LIMIT);
   const total = kind === 'parties' ? state.partyEntities.length : state.counselEntities.length;
   const rawRows = kind === 'parties' ? state.partyRows.length : state.attorneyRows.length;
   const label = scopeLabel(kind);
@@ -914,7 +1484,7 @@ function renderEntityResults(kind) {
   $('cs-kicker').textContent = label;
   $('cs-entity-title').textContent = 'King County Superior Court';
   $('cs-entity-meta').textContent = `${nf.format(total)} ${noun} | ${nf.format(rawRows)} normalized rows`;
-  const count = `<p class="cs-count"><strong>${nf.format(rows.length)} ${noun}</strong><span>${nf.format(total)} loaded</span>${chipHtml}</p>`;
+  const count = `<p class="cs-count"><strong>${nf.format(rows.length)}${matches.length > rows.length ? '+' : ''} ${noun}</strong><span>${nf.format(total)} loaded</span>${chipHtml}</p>`;
   const body = rows.length ? renderEntityGroups(kind, rows) : `<div class="cs-empty">No matching ${noun}.</div>`;
   $('cs-body').innerHTML = `${count}${body}`;
 }
@@ -945,11 +1515,15 @@ function matterLabel(count) {
   return `${nf.format(count)} matter${count === 1 ? '' : 's'}`;
 }
 
+function entityMatterCount(entity) {
+  return entity.visibleCaseNumbers?.length || entity.caseNumbers?.length || entity.visibleCases?.length || 0;
+}
+
 function entityBand(rows) {
   const thresholds = [1000, 500, 250, 100, 50, 25, 10, 5, 2, 1];
   const groups = new Map();
   for (const row of rows) {
-    const count = row.visibleCases.length;
+    const count = entityMatterCount(row);
     const low = thresholds.find((n) => count >= n) || 1;
     const label = low === 1 ? '1 matter' : `${nf.format(low)}+ matters`;
     if (!groups.has(label)) groups.set(label, { low, rows: [] });
@@ -961,9 +1535,9 @@ function entityBand(rows) {
 function renderEntityGroups(kind, rows) {
   const noun = kind === 'parties' ? 'parties' : 'counsel';
   return entityBand(rows).map((group) => {
-    const totalMatters = group.rows.reduce((sum, row) => sum + row.visibleCases.length, 0);
+    const totalMatters = group.rows.reduce((sum, row) => sum + entityMatterCount(row), 0);
     return `<details class="cs-prefix-group" open>
-      <summary class="cs-prefix-head"><span class="cs-prefix-code">${escapeHtml(group.rows[0]?.visibleCases.length === 1 ? '1' : `${group.low}+`)}</span><span class="cs-prefix-count">${nf.format(group.rows.length)} ${noun} | ${matterLabel(totalMatters)}</span></summary>
+      <summary class="cs-prefix-head"><span class="cs-prefix-code">${escapeHtml(entityMatterCount(group.rows[0]) === 1 ? '1' : `${group.low}+`)}</span><span class="cs-prefix-count">${nf.format(group.rows.length)} ${noun} | ${matterLabel(totalMatters)}</span></summary>
       <ul class="cs-results">${group.rows.map((row) => renderEntityRow(kind, row)).join('')}</ul>
     </details>`;
   }).join('');
@@ -990,7 +1564,7 @@ function renderEntityRow(kind, entity) {
   return `<li>
     <a class="cs-case-row-link" href="#cases" data-entity-search="${escapeHtml(query)}" data-entity-kind="${escapeHtml(kind)}" data-entity-key="${escapeHtml(entity.key)}" title="Show matching cases">
       <span class="cs-case-state"><span class="${isParty ? 'cs-case-state-ring' : 'cs-case-state-check'}"></span></span>
-      <span class="cs-r-title">${escapeHtml(matterLabel(entity.visibleCases.length))}</span>
+      <span class="cs-r-title">${escapeHtml(matterLabel(entityMatterCount(entity)))}</span>
       <span class="cs-r-title-name">${escapeHtml(entity.displayName || '(unnamed)')}</span>
       <span class="cs-r-meta">${escapeHtml(right.map(text).filter(Boolean).join(' | '))}</span>
     </a>
@@ -1084,41 +1658,76 @@ function hydrateCaseYearGroup(details) {
 }
 
 function findCase(caseNumber) {
-  const wanted = norm(caseNumber);
-  return state.cases.find((row) => norm(row.case_number) === wanted || norm(row.display_case_number) === wanted) || null;
+  return caseRowFor(caseNumber);
 }
 
-async function loadCase(caseNumber) {
+async function loadCase(caseNumber, progress = null) {
   const row = findCase(caseNumber);
-  const canonical = text(row?.case_number || caseNumber);
-  if (state.detailCache.has(canonical)) return state.detailCache.get(canonical);
+  const canonical = normalizeCaseKey(row?.case_number || caseNumber);
+  if (!canonical) throw new Error('Invalid case number');
+  if (state.detailCache.has(canonical)) return await state.detailCache.get(canonical);
   const path = `archive/cases/${encodeURIComponent(canonical)}.json`;
-  const res = await fetch(dataUrl(path), { cache: 'no-cache' });
-  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${path}`);
-  const record = await res.json();
-  state.detailCache.set(canonical, record);
-  return record;
+  const promise = (async () => {
+    const result = await fetchJsonWithProgress(dataUrl(path), { cache: 'no-cache' }, {
+      fetchImpl: (input, init) => fetchWithTimeout(input, init),
+      onProgress: ({ loaded, total }) => progress?.update({ bytesLoaded: loaded, bytesTotal: total }),
+      onPhase: () => progress?.update({ phase: 'Opening case profile' }),
+    });
+    if (!result.data || typeof result.data !== 'object' || Array.isArray(result.data)) {
+      throw new Error(`Invalid case profile at ${path}`);
+    }
+    progress?.update({
+      phase: 'Case profile ready',
+      shardsLoaded: 1,
+      recordsLoaded: 1,
+    });
+    return result.data;
+  })();
+  state.detailCache.set(canonical, promise);
+  try {
+    const record = await promise;
+    state.detailCache.set(canonical, record);
+    return record;
+  } catch (error) {
+    state.detailCache.delete(canonical);
+    throw error;
+  }
 }
 
 async function openCase(caseNumber, options = {}) {
   const { push = true } = options;
+  const openSeq = ++state.caseOpenSeq;
   const row = findCase(caseNumber);
-  const canonical = text(row?.case_number || caseNumber);
+  const canonical = normalizeCaseKey(row?.case_number || caseNumber);
+  if (!canonical) return;
   state.selectedCaseNumber = canonical;
-  state.selectedTab = 'summary';
+  state.selectedTab = text(options.tab) || requestedTabFromLocation() || 'summary';
   $('cs-tabstrip').hidden = true;
   $('cs-kicker').textContent = 'Case';
   $('cs-entity-title').textContent = text(row?.display_case_number || canonical);
   $('cs-entity-meta').textContent = text(row?.case_title || 'loading case');
-  $('cs-body').innerHTML = '<div class="cs-loading">Loading case profile.</div>';
-  if (push) pushCaseHash(canonical);
+  const progress = createLoadProgress({
+    phase: 'Loading case profile',
+    shardsTotal: 1,
+    recordsTotal: 1,
+  });
+  const unsubscribe = mountLoadProgress($('cs-body'), progress, { ariaLabel: 'Case profile loaded' });
+  if (push) pushCaseHash(canonical, state.selectedTab);
 
   try {
-    state.selectedCase = await loadCase(canonical);
+    const record = await loadCase(canonical, progress);
+    if (openSeq !== state.caseOpenSeq) return;
+    state.selectedCase = record;
+    const availableTabs = new Set(tabsForCase(record).map(([key]) => key));
+    if (!availableTabs.has(state.selectedTab)) state.selectedTab = 'summary';
+    if (push) pushCaseHash(canonical, state.selectedTab, { replace: true });
     renderDetail();
   } catch (err) {
-    $('cs-body').innerHTML = `<div class="cs-error">${escapeHtml(err.message || String(err))}</div>`;
+    if (openSeq !== state.caseOpenSeq) return;
+    showBodyError(err.message || String(err), 'case');
     setStatus('case load error');
+  } finally {
+    unsubscribe();
   }
 }
 
@@ -1166,8 +1775,9 @@ function renderDetail() {
     kcsc.portal_case_id ? `portal ${kcsc.portal_case_id}` : '',
   ].map(text).filter(Boolean).join(' | ');
 
-  const sourceLink = record.source_url
-    ? `<a class="hbtn" href="${escapeHtml(record.source_url)}" target="_blank" rel="noopener noreferrer">Official docket &#8599;</a>`
+  const sourceHref = safeHttpHref(record.source_url);
+  const sourceLink = sourceHref
+    ? `<a class="hbtn" href="${escapeHtml(sourceHref)}" target="_blank" rel="noopener noreferrer">Official docket &#8599;</a>`
     : '';
 
   $('cs-body').innerHTML = `<article class="cs-case-detail">
@@ -1386,12 +1996,15 @@ function renderSourceRows(rows, emptyText, options = {}) {
   const title = options.compact ? 'Raw tab summaries' : 'Source rows';
   return `<section class="cs-section">
     <h3>${escapeHtml(title)}</h3>
-    <div class="cs-line-list">${rows.map((row, index) => `<div class="cs-row">
+    <div class="cs-line-list">${rows.map((row, index) => {
+      const href = safeHttpHref(row.url);
+      return `<div class="cs-row">
       <small>${escapeHtml([row.section, row.tabKey, row.rowIndex ? `row ${row.rowIndex}` : `row ${index + 1}`].filter(Boolean).join(' | '))}</small>
       <div class="cs-field"><span class="cs-field-lead">${escapeHtml(sourceRowTitle(row))}</span></div>
       ${sourceRowSub(row) ? `<div class="cs-field">${escapeHtml(sourceRowSub(row))}</div>` : ''}
-      ${row.url ? `<div class="cs-field"><a href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.url)}</a></div>` : ''}
-    </div>`).join('')}</div>
+      ${href ? `<div class="cs-field"><a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(href)}</a></div>` : ''}
+    </div>`;
+    }).join('')}</div>
   </section>`;
 }
 
@@ -1493,12 +2106,13 @@ function documentByteStatus(record = {}, rows = []) {
 function renderProvenance(rows, record = {}) {
   const documentRows = documentIndexRows(record);
   const documentCapture = documentByteStatus(record, documentRows);
+  const sourceHref = safeHttpHref(record.source_url);
   const overview = renderKv([
     ['Canonical', 'KCSC normalized JSON'],
     ['Data source', provenanceDataSource()],
     ['Generated', state.manifest?.generated_at],
     ['Source', record.source],
-    ['Source URL', record.source_url],
+    ['Source URL', sourceHref],
     ['Captured', record.captured_at],
     ['Updated', record.updated_at],
     ['Document byte capture', documentCapture],
@@ -1509,14 +2123,17 @@ function renderProvenance(rows, record = {}) {
     <div class="cs-record-table-wrap">
       <table class="cs-record-table">
         <thead><tr><th>Label</th><th>Tab</th><th>Tables</th><th>Text</th><th>SHA-256</th><th>URL</th></tr></thead>
-        <tbody>${rows.map((row) => `<tr>
+        <tbody>${rows.map((row) => {
+          const href = safeHttpHref(row.url);
+          return `<tr>
           <td>${escapeHtml(row.label || row.section || '')}</td>
           <td class="cs-mono">${escapeHtml(row.tabKey || '')}</td>
           <td class="cs-mono">${escapeHtml(row.tableCount ?? '')}</td>
           <td class="cs-mono">${escapeHtml(row.pageTextLength ?? '')}</td>
           <td class="cs-mono">${escapeHtml(row.pageTextSha256 || '')}</td>
-          <td>${row.url ? `<a href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer">open</a>` : ''}</td>
-        </tr>`).join('')}</tbody>
+          <td>${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">open</a>` : ''}</td>
+        </tr>`;
+        }).join('')}</tbody>
       </table>
     </div>
   </section>` : '<div class="cs-empty">No provenance rows.</div>';
@@ -1538,5 +2155,5 @@ function renderRaw(record) {
 loadData().catch((err) => {
   console.error(err);
   setStatus('error', 'data load failed');
-  $('cs-body').innerHTML = `<div class="cs-error">${escapeHtml(err.message || String(err))}</div>`;
+  showBodyError(err.message || String(err), 'reload');
 });
