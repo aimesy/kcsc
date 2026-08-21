@@ -686,7 +686,7 @@ async function loadData() {
   } else {
     renderResults();
   }
-  setStatus('loaded', archiveReadyText());
+  setStatus('loaded', initialCase ? '' : archiveReadyText());
 }
 
 async function ensureEntityData(kind) {
@@ -1437,6 +1437,7 @@ async function runCaseSearch(filters, searchSeq) {
 function renderResults() {
   if (!state.directory && !state.cases.length) return;
   clearTimeout(state.searchTimer);
+  state.caseOpenSeq += 1;
   const searchSeq = ++state.searchSeq;
   state.selectedCase = null;
   $('cs-tabstrip').hidden = true;
@@ -1697,6 +1698,8 @@ async function loadCase(caseNumber, progress = null) {
 
 async function openCase(caseNumber, options = {}) {
   const { push = true } = options;
+  clearTimeout(state.searchTimer);
+  state.searchSeq += 1;
   const openSeq = ++state.caseOpenSeq;
   const row = findCase(caseNumber);
   const canonical = normalizeCaseKey(row?.case_number || caseNumber);

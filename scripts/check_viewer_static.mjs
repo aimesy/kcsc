@@ -76,6 +76,8 @@ assert(app.includes('CASE_SEARCH_RESULT_LIMIT = 300'), 'case search display cap 
 assert(app.includes('CASE_SEARCH_CONCURRENCY = 6'), 'case search concurrency must remain bounded');
 assert(app.includes('scheduleResults(delay = 260)'), 'case search debounce must match SFSC');
 assert(app.includes('searchSeq === state.searchSeq'), 'stale case search guard is missing');
+assert(app.includes('const openSeq = ++state.caseOpenSeq'), 'stale case detail guard is missing');
+assert(app.includes('state.caseOpenSeq += 1'), 'returning to results must cancel stale case loads');
 assert(app.includes('createLoadProgress'), 'visible loading progress is missing');
 assert(app.includes('REQUEST_TIMEOUT_MS = 20000'), 'case request timeout must match SFSC');
 assert(app.includes('safeHttpHref'), 'external case links must be protocol checked');
