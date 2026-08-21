@@ -17,6 +17,7 @@ const DUCKDB_ESM_URL = 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-
 const REMOTE_DATA_BASE = 'https://raw.githubusercontent.com/aimesy/kcsc-data/master/';
 const CASE_SEARCH_RESULT_LIMIT = 300;
 const CASE_SEARCH_CONCURRENCY = 6;
+const DIRECTORY_PAGE_SIZE = 300;
 const REQUEST_TIMEOUT_MS = 20000;
 
 const $ = (id) => document.getElementById(id);
@@ -879,7 +880,7 @@ function bindEvents() {
     });
   });
 
-  document.addEventListener('click', (event) => {
+  document.addEventListener('click', async (event) => {
     const scopeWrap = event.target.closest('.cs-scope-wrap');
     if (!scopeWrap) {
       $('cs-scope-menu').classList.remove('open');
@@ -935,6 +936,24 @@ function bindEvents() {
     if (directoryRetry) {
       const details = directoryRetry.closest('[data-directory-group-key]');
       if (details) hydrateDirectoryYearGroup(details);
+      return;
+    }
+
+    const directoryMore = event.target.closest('[data-directory-more]');
+    if (directoryMore) {
+      const key = directoryMore.getAttribute('data-directory-more');
+      const cached = state.directoryHydratedRows.get(key);
+      const rows = cached ? await cached : [];
+      const list = directoryMore.closest('[data-directory-group-body]')?.querySelector('[data-directory-results]');
+      const offset = num(directoryMore.getAttribute('data-offset'));
+      if (!list || !Array.isArray(rows) || offset < 1) return;
+      const next = Math.min(rows.length, offset + DIRECTORY_PAGE_SIZE);
+      list.insertAdjacentHTML('beforeend', rows.slice(offset, next).map(renderCaseRow).join(''));
+      if (next >= rows.length) directoryMore.closest('.cs-directory-more')?.remove();
+      else {
+        directoryMore.setAttribute('data-offset', String(next));
+        directoryMore.textContent = `Show next ${nf.format(Math.min(DIRECTORY_PAGE_SIZE, rows.length - next))}`;
+      }
       return;
     }
 
@@ -1237,6 +1256,15 @@ function renderDirectoryBrowse(filters) {
   $('cs-body').innerHTML = `${resultCountHtml(count, state.directory.case_count)}${body || '<div class="cs-empty">No matching case groups.</div>'}`;
 }
 
+function renderDirectoryGroupRows(body, key, rows) {
+  const visible = Math.min(DIRECTORY_PAGE_SIZE, rows.length);
+  const more = visible < rows.length
+    ? `<div class="cs-directory-more"><button type="button" class="hbtn" data-directory-more="${escapeHtml(key)}" data-offset="${visible}">Show next ${nf.format(Math.min(DIRECTORY_PAGE_SIZE, rows.length - visible))}</button></div>`
+    : '';
+  body.innerHTML = `<ul class="cs-results" data-directory-results>${rows.slice(0, visible).map(renderCaseRow).join('')}</ul>${more}`;
+  body.dataset.hydrated = '1';
+}
+
 async function hydrateDirectoryYearGroup(details) {
   if (!details?.open || !details.hasAttribute('data-directory-group-key')) return;
   const key = details.getAttribute('data-directory-group-key');
@@ -1247,8 +1275,7 @@ async function hydrateDirectoryYearGroup(details) {
     try {
       const rows = await state.directoryHydratedRows.get(key);
       if (details.isConnected) {
-        body.innerHTML = `<ul class="cs-results">${rows.map(renderCaseRow).join('')}</ul>`;
-        body.dataset.hydrated = '1';
+        renderDirectoryGroupRows(body, key, rows);
       }
     } catch {
       // The original loader renders the actionable error.
@@ -1303,8 +1330,7 @@ async function hydrateDirectoryYearGroup(details) {
     const rows = await promise;
     state.directoryHydratedRows.set(key, rows);
     if (details.isConnected) {
-      body.innerHTML = `<ul class="cs-results">${rows.map(renderCaseRow).join('')}</ul>`;
-      body.dataset.hydrated = '1';
+      renderDirectoryGroupRows(body, key, rows);
     }
   } catch (error) {
     state.directoryHydratedRows.delete(key);

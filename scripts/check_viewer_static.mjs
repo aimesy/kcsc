@@ -74,6 +74,8 @@ assert(app.includes("state.manifest?.archive?.cases_index || 'archive/cases-inde
 assert(app.includes('const batchSize = 4'), 'case index shard concurrency must remain bounded');
 assert(app.includes('CASE_SEARCH_RESULT_LIMIT = 300'), 'case search display cap must match SFSC');
 assert(app.includes('CASE_SEARCH_CONCURRENCY = 6'), 'case search concurrency must remain bounded');
+assert(app.includes('DIRECTORY_PAGE_SIZE = 300'), 'expanded directory groups must render in bounded pages');
+assert(app.includes('data-directory-more'), 'expanded directory groups must expose incremental rendering');
 assert(app.includes('scheduleResults(delay = 260)'), 'case search debounce must match SFSC');
 assert(app.includes('searchSeq === state.searchSeq'), 'stale case search guard is missing');
 assert(app.includes('const openSeq = ++state.caseOpenSeq'), 'stale case detail guard is missing');
