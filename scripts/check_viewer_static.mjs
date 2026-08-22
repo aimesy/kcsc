@@ -18,6 +18,7 @@ function assert(condition, message) {
 
 const index = read('index.html');
 const app = read('assets/js/kcsc-viewer.js');
+const terms = read('terms.html');
 const sharedThemeAssets = new Set([
   'theme.css',
   'theme-bar.css',
@@ -36,6 +37,11 @@ const allSharedThemeMatches = [...index.matchAll(
 
 assert(index.includes('<title>KCSC Case Archive</title>'), 'index title must identify KCSC');
 assert(index.includes('<meta name="theme-color" content="#24211d">'), 'theme-color metadata is missing');
+assert(index.includes('<link rel="terms-of-service" href="./terms.html">'), 'terms metadata is missing');
+assert(index.includes('href="./terms.html" style="color:inherit;text-decoration:none">T&amp;Cs</a>'), 'quiet T&Cs footer link is missing');
+assert(terms.includes('Version 0.1. Effective August 22, 2026.'), 'terms page version is missing');
+assert(terms.includes('I claim no ownership in facts, official court records, government works'), 'source record boundary is missing from terms');
+assert(terms.includes('commercial artificial intelligence or machine learning system'), 'commercial AI license boundary is missing from terms');
 assert(sharedThemeMatches.length === sharedThemeAssets.size, 'shared theme asset set must contain exactly seven pinned assets');
 assert(allSharedThemeMatches.length === sharedThemeAssets.size, 'unexpected shared theme asset reference remains');
 assert(

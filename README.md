@@ -47,3 +47,5 @@ Data contract:
 
 KCSC does not yet have document-byte capture. The viewer surfaces deferred
 document rows from each case JSON instead of pretending document downloads exist.
+
+[T&Cs](https://kcsc.amyc.us/terms.html)
