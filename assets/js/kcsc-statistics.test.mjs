@@ -101,12 +101,22 @@ assert.throws(() => validateKcscAttorneyRankings({
 
 const judgmentRankings = validateKcscJudgmentRankings({
   format: 'kcsc-judgment-rankings-v1',
-  rows: [{ rank: 1, case_number: '262000001SEA', judgment_amount: 1200.5 }],
+  matter_types: [{ key: 'civil', label: 'Civil', judgment_count: 1 }],
+  matter_categories: [{ key: 'civil:Contract', label: 'Contract', matter_type: 'civil', judgment_count: 1 }],
+  rows: [{
+    rank: 1, case_number: '262000001SEA', judgment_amount: 1200.5,
+    case_type: 'civil', cause_of_action: 'Contract',
+  }],
 });
 assert.equal(judgmentRankings.rows[0].judgment_amount, 1200.5);
 assert.throws(() => validateKcscJudgmentRankings({
   format: 'kcsc-judgment-rankings-v1',
-  rows: [{ rank: 1, case_number: '262000001SEA', judgment_amount: 0 }],
+  matter_types: [{ key: 'civil', label: 'Civil', judgment_count: 1 }],
+  matter_categories: [{ key: 'civil:Contract', label: 'Contract', matter_type: 'civil', judgment_count: 1 }],
+  rows: [{
+    rank: 1, case_number: '262000001SEA', judgment_amount: 0,
+    case_type: 'civil', cause_of_action: 'Contract',
+  }],
 }), /invalid KCSC judgment ranking row/);
 
 console.log('KCSC statistics checks passed');

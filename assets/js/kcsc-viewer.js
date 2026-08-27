@@ -52,10 +52,6 @@ const STATISTICS_LIMITS = new Set([0, 20, 50, 100, 500]);
 
 const $ = (id) => document.getElementById(id);
 const nf = new Intl.NumberFormat('en-US');
-const compactNf = new Intl.NumberFormat('en-US', {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-});
 const GENERIC_COUNSEL_NAMES = new Set([
   'attorney',
   'counsel',
@@ -1558,7 +1554,7 @@ function statisticsFeatureLabel(name) {
 function statisticsMetric(label, value, note) {
   return `<article class="cs-stat-metric">
     <span>${escapeHtml(label)}</span>
-    <strong title="${escapeHtml(nf.format(value))}">${escapeHtml(compactNf.format(value))}</strong>
+    <strong>${escapeHtml(nf.format(value))}</strong>
     <small>${escapeHtml(note)}</small>
   </article>`;
 }
@@ -1606,7 +1602,7 @@ function statisticsTrend(rows, cases, domainRows = rows) {
     const height = (num(row.cases) / maximum) * 100;
     const label = row.value === 'unknown' ? '?' : row.value;
     return `<li aria-label="${escapeHtml(row.value)}: ${escapeHtml(nf.format(row.cases))} cases">
-      <span class="cs-stat-trend-value">${escapeHtml(compactNf.format(row.cases))}</span>
+      <span class="cs-stat-trend-value">${escapeHtml(nf.format(row.cases))}</span>
       <span class="cs-stat-trend-bar"><i style="height:${height.toFixed(3)}%"></i></span>
       <span class="cs-stat-trend-year">${escapeHtml(label)}</span>
     </li>`;
@@ -1640,6 +1636,7 @@ function defaultStatisticsControls() {
     mode: 'dashboard', aggregate: 'case_type', topic: 'all_matters', category: '',
     measure: 'matter_count_last_2_years', view: 'table', sort: 'value_desc', limit: 100,
     aggregateFilter: '', rankingFilter: '', judgmentFilter: '',
+    judgmentMatterType: '', judgmentMatterCategory: '',
   };
 }
 
@@ -1654,7 +1651,10 @@ function loadStatisticsControls() {
   if (!STATISTICS_VIEWS.has(controls.view)) controls.view = defaults.view;
   if (!STATISTICS_SORTS.has(controls.sort)) controls.sort = defaults.sort;
   controls.limit = STATISTICS_LIMITS.has(Number(controls.limit)) ? Number(controls.limit) : defaults.limit;
-  for (const key of ['topic', 'category', 'aggregateFilter', 'rankingFilter', 'judgmentFilter']) {
+  for (const key of [
+    'topic', 'category', 'aggregateFilter', 'rankingFilter', 'judgmentFilter',
+    'judgmentMatterType', 'judgmentMatterCategory',
+  ]) {
     controls[key] = text(controls[key]).slice(0, 160);
   }
   return controls;
@@ -1668,6 +1668,7 @@ function updateStatisticsControl(name, value, options = {}) {
   if (!state.statisticsControls) state.statisticsControls = loadStatisticsControls();
   if (name === 'limit') value = Number(value);
   if (name === 'topic') state.statisticsControls.category = '';
+  if (name === 'judgmentMatterType') state.statisticsControls.judgmentMatterCategory = '';
   state.statisticsControls[name] = value;
   if (options.persist !== false) saveStatisticsControls();
   clearTimeout(state.searchTimer);
@@ -1679,7 +1680,7 @@ function updateStatisticsControl(name, value, options = {}) {
 
 function statisticsModebar() {
   const labels = [
-    ['aggregates', 'Aggregates'], ['dashboard', 'Dashboard'],
+    ['dashboard', 'Dashboard'], ['aggregates', 'Aggregates'],
     ['rankings', 'Attorney rankings'], ['judgments', 'Judgment rankings'],
   ];
   return `<nav class="cs-stat-modebar" role="tablist" aria-label="Statistics mode">${labels.map(([key, label]) => (
@@ -1912,27 +1913,43 @@ function statisticsJudgmentRows() {
     component_summary: (row.components || []).map((component) => (
       `${component.label || 'Component'}: ${statisticsFormatValue(component.amount, 'currency')}`
     )).join(' · '),
-  })).filter((row) => !needle || [row.case_number, row.case_title, row.case_type, row.cause_of_action, row.component_summary].some((value) => norm(value).includes(needle)));
+  })).filter((row) => (
+    (!controls.judgmentMatterType || row.case_type === controls.judgmentMatterType)
+    && (!controls.judgmentMatterCategory
+      || `${row.case_type}:${row.cause_of_action || 'Unknown'}` === controls.judgmentMatterCategory)
+    && (!needle || [row.case_number, row.case_title, row.case_type, row.cause_of_action, row.component_summary]
+      .some((value) => norm(value).includes(needle)))
+  ));
   return statisticsSortRows(rows, 'case_number', 'judgment_amount');
 }
 
 function statisticsJudgmentContent() {
+  const controls = state.statisticsControls;
   const rows = statisticsJudgmentRows();
   const shown = statisticsApplyLimit(rows);
-  const extra = '<label>Measure<select disabled><option>Reported active judgment amount</option></select></label>';
+  const matterTypes = state.judgmentRankings?.matter_types || [];
+  const categories = (state.judgmentRankings?.matter_categories || [])
+    .filter((item) => !controls.judgmentMatterType || item.matter_type === controls.judgmentMatterType);
+  const extra = `<label>Matter type<select data-statistics-control="judgmentMatterType">${statisticsSelectOptions([
+    ['', 'All matter types'], ...matterTypes.map((item) => [item.key, `${item.label} (${nf.format(item.judgment_count)})`]),
+  ], controls.judgmentMatterType)}</select></label>
+    <label>Matter category<select data-statistics-control="judgmentMatterCategory">${statisticsSelectOptions([
+    ['', 'All matter categories'], ...categories.map((item) => [item.key, `${item.label} (${nf.format(item.judgment_count)})`]),
+  ], controls.judgmentMatterCategory)}</select></label>
+    <label>Measure<select disabled><option>Judgment amount</option></select></label>`;
   const columns = [
     { key: 'rank', label: '#', numeric: true },
     { key: 'case_number', label: 'Case number', render: (row) => `<a href="#case=${encodeURIComponent(row.case_number)}" data-case-open="${escapeHtml(row.case_number)}">${escapeHtml(row.case_number)}</a>` },
     { key: 'case_title', label: 'Case title' }, { key: 'case_type', label: 'Case type' },
-    { key: 'cause_of_action', label: 'Cause of action' },
-    { key: 'judgment_amount', label: 'Reported active amount', numeric: true, render: (row) => statisticsFormatValue(row.judgment_amount, 'currency') },
-    { key: 'judgment_date', label: 'Latest judgment date' },
+    { key: 'cause_of_action', label: 'Matter category' },
+    { key: 'judgment_amount', label: 'Judgment amount', numeric: true, render: (row) => statisticsFormatValue(row.judgment_amount, 'currency') },
+    { key: 'judgment_date', label: 'Judgment date' },
     { key: 'component_count', label: 'Components', numeric: true, render: (row) => nf.format(row.component_count) },
     { key: 'component_summary', label: 'Reported components' },
   ];
   const content = state.statisticsControls.view === 'table' ? statisticsTable(columns, shown) : statisticsChart(shown.slice(0, 100), 'case_number', 'judgment_amount', 'currency');
   state.statisticsExport = { filename: 'kcsc-judgment-rankings.csv', columns: columns.map((column) => [column.label, column.key]), rows };
-  return `${statisticsCommonControls(extra, 'judgmentFilter')}<p class="cs-stat-result-state">${nf.format(shown.length)} of ${nf.format(rows.length)} qualified cases · explicit positive dollar values from preserved Active judgment cells · components summed once per case</p>${content}`;
+  return `${statisticsCommonControls(extra, 'judgmentFilter')}<p class="cs-stat-result-state">${nf.format(shown.length)} of ${nf.format(rows.length)} qualified cases · explicit case total or distinct criminal elements · components are not added over an explicit total</p>${content}`;
 }
 
 function csvValue(value) {

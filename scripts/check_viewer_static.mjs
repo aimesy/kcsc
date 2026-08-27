@@ -86,9 +86,13 @@ assert(app.includes("$('cs-statistics-btn').addEventListener('click'"), 'visible
 assert(app.includes('statisticsFeatureCoverage'), 'feature coverage statistics are missing');
 assert(app.includes('statisticsTrend'), 'filing trend statistics are missing');
 assert(app.includes("['aggregates', 'dashboard', 'rankings', 'judgments']"), 'SFSC-compatible statistics modes are missing');
-assert(app.indexOf("['aggregates', 'Aggregates']") < app.indexOf("['dashboard', 'Dashboard']")
-  && app.indexOf("['dashboard', 'Dashboard']") < app.indexOf("['rankings', 'Attorney rankings']"),
-  'Dashboard must sit immediately after Aggregates and before rankings');
+assert(app.indexOf("['dashboard', 'Dashboard']") < app.indexOf("['aggregates', 'Aggregates']")
+  && app.indexOf("['aggregates', 'Aggregates']") < app.indexOf("['rankings', 'Attorney rankings']"),
+  'Dashboard must be the leftmost statistics mode');
+assert(app.includes('judgmentMatterType') && app.includes('judgmentMatterCategory'),
+  'judgment matter type/category controls are missing');
+assert(app.includes('<strong>${escapeHtml(nf.format(value))}</strong>'),
+  'dashboard metrics must show exact figures');
 assert(app.includes('function statisticsAttorneyRows()'), 'attorney ranking calculations are missing');
 assert(app.includes('function statisticsJudgmentRows()'), 'judgment ranking calculations are missing');
 assert(app.includes('competition ranks'), 'attorney ranking tie semantics are not disclosed');

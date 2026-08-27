@@ -63,11 +63,12 @@ judgment, document-index, provenance, and raw-source features. Legacy manifests
 remain readable; new indexed filters appear only when the manifest declares the
 corresponding compact-index field and positive feature row count.
 
-The Statistics scope now follows the shared SFSC interaction model: Aggregates,
-Dashboard, Attorney rankings, and Judgment rankings. It includes headline
-totals, filing-year trends, type/location/status/node breakdowns, case-versus-row
-feature coverage, seven attorney ranking measures, category contributions,
-competition ranks, explicit-active-amount judgment rankings, four views,
-sorting, limits, text filters, persisted controls, and CSV export. Ranking
+The Statistics scope now follows the shared SFSC interaction model: Dashboard,
+Aggregates, Attorney rankings, and Judgment rankings. It includes exact headline
+totals, exact filing-year trends, type/location/status/node breakdowns,
+case-versus-row feature coverage, seven attorney ranking measures, category
+contributions, competition ranks, civil explicit-total and criminal-element
+judgment rankings, dependent matter-type and matter-category judgment filters,
+four views, sorting, limits, text filters, persisted controls, and CSV export. Ranking
 resources load lazily through the unified data client; opening the dashboard
 still does not download the full case index or either ranking payload.

@@ -133,7 +133,12 @@ const attorneyRankings = {
 };
 const judgmentRankings = {
   format: 'kcsc-judgment-rankings-v1',
-  rows: [{ rank: 1, case_number: '262000011SEA', judgment_amount: 10 }],
+  matter_types: [{ key: 'civil', label: 'Civil', judgment_count: 1 }],
+  matter_categories: [{ key: 'civil:Contract', label: 'Contract', matter_type: 'civil', judgment_count: 1 }],
+  rows: [{
+    rank: 1, case_number: '262000011SEA', judgment_amount: 10,
+    case_type: 'civil', cause_of_action: 'Contract',
+  }],
 };
 
 const requests = [];

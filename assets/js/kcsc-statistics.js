@@ -215,16 +215,44 @@ export function validateKcscAttorneyRankings(data) {
 export function validateKcscJudgmentRankings(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)
     || clean(data.format) !== KCSC_JUDGMENT_RANKINGS_FORMAT
-    || !Array.isArray(data.rows)) throw new Error('invalid KCSC judgment rankings');
+    || !Array.isArray(data.rows) || !Array.isArray(data.matter_types)
+    || !Array.isArray(data.matter_categories)) throw new Error('invalid KCSC judgment rankings');
+  const matterTypes = new Set();
+  let typeTotal = 0;
+  for (const item of data.matter_types) {
+    const key = clean(item?.key);
+    if (!key || matterTypes.has(key) || !clean(item?.label)) {
+      throw new Error('invalid KCSC judgment matter type');
+    }
+    matterTypes.add(key);
+    typeTotal += count(item.judgment_count, `judgment matter type ${key}`);
+  }
+  const matterCategories = new Set();
+  let categoryTotal = 0;
+  for (const item of data.matter_categories) {
+    const key = clean(item?.key);
+    const matterType = clean(item?.matter_type);
+    if (!key || matterCategories.has(key) || !matterTypes.has(matterType) || !clean(item?.label)) {
+      throw new Error('invalid KCSC judgment matter category');
+    }
+    matterCategories.add(key);
+    categoryTotal += count(item.judgment_count, `judgment matter category ${key}`);
+  }
   const cases = new Set();
   for (const [index, row] of data.rows.entries()) {
     const caseNumber = clean(row?.case_number);
     const amount = Number(row?.judgment_amount);
+    const matterType = clean(row?.case_type);
+    const matterCategory = `${matterType}:${clean(row?.cause_of_action) || 'Unknown'}`;
     if (!caseNumber || cases.has(caseNumber) || !Number.isFinite(amount) || amount <= 0
-      || !Number.isSafeInteger(row?.rank) || row.rank < 1) {
+      || !Number.isSafeInteger(row?.rank) || row.rank < 1
+      || !matterTypes.has(matterType) || !matterCategories.has(matterCategory)) {
       throw new Error(`invalid KCSC judgment ranking row ${index}`);
     }
     cases.add(caseNumber);
+  }
+  if (typeTotal !== data.rows.length || categoryTotal !== data.rows.length) {
+    throw new Error('KCSC judgment facets do not reconcile to ranking rows');
   }
   return data;
 }
