@@ -35,6 +35,27 @@ and portal-node breakdowns plus both case coverage and row totals for every
 declared feature. Statistics load with the manifest; opening the dashboard does
 not download compact index shards or parquet tables.
 
+When rankings are published, `statistics.ranking_sources` advertises two lazy,
+same-base resources:
+
+| Source | Format | Grain |
+|---|---|---|
+| `data/attorney-practice-rankings.json` | `kcsc-attorney-rankings-v1` | One stable KCSC attorney identity per matter topic, with per-category contributions. |
+| `data/judgment-rankings.json` | `kcsc-judgment-rankings-v1` | One canonical case with at least one explicit positive dollar value in a preserved `Active` judgment cell. |
+
+The attorney contract uses the same interoperable measure keys as SFSC where
+the KCSC source supports them: `matter_count`, `matter_count_last_2_years`,
+`practice_share_percent`, `judgment_total_amount`, `judgment_count`, and
+`largest_judgment_amount`. KCSC uses `all_matter_count` because its source is
+not limited to California civil practice. Stable `attorney_id` is the identity
+key; names and optional bar numbers are display attributes.
+
+KCSC judgment amounts have a narrower source meaning than SFSC judgment totals.
+They are the sum, once per case, of explicit positive dollar values in preserved
+KCSC `Active` judgment cells. The contract publishes that meaning in
+`amount_semantics`; clients must not silently relabel it as a court-entered
+total judgment.
+
 Important KCSC differences from SFSC:
 
 - Case numbers carry a location suffix, currently `SEA` or `KNT`.

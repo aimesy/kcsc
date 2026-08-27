@@ -28,6 +28,27 @@ const CASE_SEARCH_RESULT_LIMIT = 300;
 const CASE_SEARCH_CONCURRENCY = 6;
 const DIRECTORY_PAGE_SIZE = 300;
 const REQUEST_TIMEOUT_MS = 20000;
+const STATISTICS_STORAGE_KEY = 'kcsc.statistics.controls.v2';
+const STATISTICS_MODES = new Set(['aggregates', 'dashboard', 'rankings', 'judgments']);
+const STATISTICS_MEASURES = new Map([
+  ['matter_count_last_2_years', 'Matters within the last 2 years'],
+  ['matter_count', 'Matters'],
+  ['practice_share_percent', 'Practice share (%)'],
+  ['all_matter_count', 'All matters'],
+  ['judgment_total_amount', 'Total reported judgments ($)'],
+  ['judgment_count', 'Judgment count'],
+  ['largest_judgment_amount', 'Largest reported judgment ($)'],
+]);
+const STATISTICS_AGGREGATES = new Map([
+  ['case_type', 'Case type'],
+  ['filing_year', 'Filing year'],
+  ['location', 'Location'],
+  ['status_group', 'Status'],
+  ['portal_node', 'Portal node'],
+]);
+const STATISTICS_VIEWS = new Set(['table', 'horizontal', 'vertical', 'line']);
+const STATISTICS_SORTS = new Set(['value_desc', 'value_asc', 'name_asc', 'name_desc']);
+const STATISTICS_LIMITS = new Set([0, 20, 50, 100, 500]);
 
 const $ = (id) => document.getElementById(id);
 const nf = new Intl.NumberFormat('en-US');
@@ -83,6 +104,10 @@ const state = {
   entityCaseFilter: null,
   scope: 'cases',
   statisticsFilters: { caseType: '', location: '' },
+  statisticsControls: null,
+  attorneyRankings: null,
+  judgmentRankings: null,
+  statisticsRankingPromises: new Map(),
   searchSeq: 0,
   searchTimer: null,
   caseOpenSeq: 0,
@@ -865,7 +890,27 @@ function bindEvents() {
     } else if (event.target?.id === 'cs-stat-location') {
       state.statisticsFilters.location = event.target.value;
       renderStatistics();
+    } else if (event.target?.matches?.('[data-statistics-control]')) {
+      updateStatisticsControl(event.target.dataset.statisticsControl, event.target.value);
     }
+  });
+  $('cs-body').addEventListener('input', (event) => {
+    if (event.target?.matches?.('[data-statistics-filter]')) {
+      updateStatisticsControl(event.target.dataset.statisticsFilter, event.target.value, { persist: false });
+    }
+  });
+  $('cs-body').addEventListener('click', (event) => {
+    const mode = event.target.closest?.('[data-statistics-mode]');
+    if (mode) {
+      const nextMode = mode.dataset.statisticsMode;
+      if (STATISTICS_MODES.has(nextMode)) {
+        state.statisticsControls.mode = nextMode;
+        saveStatisticsControls();
+        renderStatistics();
+      }
+      return;
+    }
+    if (event.target.closest?.('[data-statistics-export]')) exportStatisticsCsv();
   });
 
   $('cs-scope-btn').addEventListener('click', () => {
@@ -1590,30 +1635,138 @@ function statisticsFeatureCoverage(features, cases) {
   </section>`;
 }
 
-function renderStatistics() {
-  const statistics = state.manifest?.statistics;
-  $('cs-kicker').textContent = 'Statistics';
-  $('cs-entity-title').textContent = 'KCSC archive statistics';
-  $('cs-tabstrip').hidden = true;
-  if (!statistics) {
-    $('cs-entity-meta').textContent = 'statistics unavailable in this data release';
-    showBodyError('This KCSC data release does not include the versioned statistics contract.');
-    return;
-  }
+function defaultStatisticsControls() {
+  return {
+    mode: 'dashboard', aggregate: 'case_type', topic: 'all_matters', category: '',
+    measure: 'matter_count_last_2_years', view: 'table', sort: 'value_desc', limit: 100,
+    aggregateFilter: '', rankingFilter: '', judgmentFilter: '',
+  };
+}
 
-  const segment = statisticsSegment(statistics, state.statisticsFilters);
-  if (!segment) {
-    showBodyError('The selected statistics segment is unavailable.');
-    return;
+function loadStatisticsControls() {
+  let raw = null;
+  try { raw = JSON.parse(localStorage.getItem(STATISTICS_STORAGE_KEY) || 'null'); } catch { /* optional */ }
+  const defaults = defaultStatisticsControls();
+  const controls = { ...defaults, ...(raw || {}) };
+  if (!STATISTICS_MODES.has(controls.mode)) controls.mode = defaults.mode;
+  if (!STATISTICS_AGGREGATES.has(controls.aggregate)) controls.aggregate = defaults.aggregate;
+  if (!STATISTICS_MEASURES.has(controls.measure)) controls.measure = defaults.measure;
+  if (!STATISTICS_VIEWS.has(controls.view)) controls.view = defaults.view;
+  if (!STATISTICS_SORTS.has(controls.sort)) controls.sort = defaults.sort;
+  controls.limit = STATISTICS_LIMITS.has(Number(controls.limit)) ? Number(controls.limit) : defaults.limit;
+  for (const key of ['topic', 'category', 'aggregateFilter', 'rankingFilter', 'judgmentFilter']) {
+    controls[key] = text(controls[key]).slice(0, 160);
   }
+  return controls;
+}
+
+function saveStatisticsControls() {
+  try { localStorage.setItem(STATISTICS_STORAGE_KEY, JSON.stringify(state.statisticsControls)); } catch { /* optional */ }
+}
+
+function updateStatisticsControl(name, value, options = {}) {
+  if (!state.statisticsControls) state.statisticsControls = loadStatisticsControls();
+  if (name === 'limit') value = Number(value);
+  if (name === 'topic') state.statisticsControls.category = '';
+  state.statisticsControls[name] = value;
+  if (options.persist !== false) saveStatisticsControls();
+  clearTimeout(state.searchTimer);
+  state.searchTimer = setTimeout(() => {
+    saveStatisticsControls();
+    renderStatistics();
+  }, options.persist === false ? 180 : 0);
+}
+
+function statisticsModebar() {
+  const labels = [
+    ['aggregates', 'Aggregates'], ['dashboard', 'Dashboard'],
+    ['rankings', 'Attorney rankings'], ['judgments', 'Judgment rankings'],
+  ];
+  return `<nav class="cs-stat-modebar" role="tablist" aria-label="Statistics mode">${labels.map(([key, label]) => (
+    `<button type="button" class="cs-stat-mode-tab" data-statistics-mode="${key}" role="tab" aria-selected="${state.statisticsControls.mode === key}">${label}</button>`
+  )).join('')}</nav>`;
+}
+
+function statisticsSelectOptions(options, selected) {
+  return options.map(([value, label]) => (
+    `<option value="${escapeHtml(value)}"${value === selected ? ' selected' : ''}>${escapeHtml(label)}</option>`
+  )).join('');
+}
+
+function statisticsCommonControls(extra, filterKey) {
+  const controls = state.statisticsControls;
+  return `<section class="cs-stat-controls" aria-label="Statistics controls">${extra}
+    <label>View<select data-statistics-control="view">${statisticsSelectOptions([
+      ['table', 'Table'], ['horizontal', 'Horizontal bars'], ['vertical', 'Vertical bars'], ['line', 'Line'],
+    ], controls.view)}</select></label>
+    <label>Sort<select data-statistics-control="sort">${statisticsSelectOptions([
+      ['value_desc', 'Largest first'], ['value_asc', 'Smallest first'], ['name_asc', 'Name A-Z'], ['name_desc', 'Name Z-A'],
+    ], controls.sort)}</select></label>
+    <label>Rows<select data-statistics-control="limit">${statisticsSelectOptions([
+      ['20', '20'], ['50', '50'], ['100', '100'], ['500', '500'], ['0', 'All'],
+    ], String(controls.limit))}</select></label>
+    <label>Contains<input type="search" data-statistics-filter="${filterKey}" value="${escapeHtml(controls[filterKey])}" placeholder="Filter rows"></label>
+    <button class="hbtn cs-stat-export" type="button" data-statistics-export>Export CSV</button>
+  </section>`;
+}
+
+function statisticsSortRows(rows, labelKey, measureKey) {
+  const mode = state.statisticsControls.sort;
+  return [...rows].sort((left, right) => {
+    if (mode === 'name_asc') return text(left[labelKey]).localeCompare(text(right[labelKey]));
+    if (mode === 'name_desc') return text(right[labelKey]).localeCompare(text(left[labelKey]));
+    const direction = mode === 'value_asc' ? 1 : -1;
+    return direction * (num(left[measureKey]) - num(right[measureKey]))
+      || text(left[labelKey]).localeCompare(text(right[labelKey]));
+  });
+}
+
+function statisticsApplyLimit(rows) {
+  return state.statisticsControls.limit ? rows.slice(0, state.statisticsControls.limit) : rows;
+}
+
+function statisticsFormatValue(value, kind = 'number') {
+  if (kind === 'currency') return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num(value));
+  if (kind === 'percent') return `${num(value).toFixed(2)}%`;
+  return nf.format(num(value));
+}
+
+function statisticsTable(columns, rows) {
+  return `<div class="cs-stat-table-wrap"><table class="cs-stat-table"><thead><tr>${columns.map((column) => (
+    `<th${column.numeric ? ' class="is-number"' : ''}>${escapeHtml(column.label)}</th>`
+  )).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${columns.map((column) => {
+    const value = column.render ? column.render(row) : escapeHtml(row[column.key] ?? '');
+    return `<td${column.numeric ? ' class="is-number"' : ''}>${value}</td>`;
+  }).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+function statisticsChart(rows, labelKey, measureKey, kind = 'number') {
+  const maximum = Math.max(1, ...rows.map((row) => num(row[measureKey])));
+  if (state.statisticsControls.view === 'vertical') {
+    return `<section class="cs-stat-chart"><ol class="cs-stat-trend">${rows.map((row) => (
+      `<li><span class="cs-stat-trend-value">${escapeHtml(statisticsFormatValue(row[measureKey], kind))}</span>`
+      + `<span class="cs-stat-trend-bar"><i style="height:${(100 * num(row[measureKey]) / maximum).toFixed(3)}%"></i></span>`
+      + `<span title="${escapeHtml(row[labelKey])}">${escapeHtml(text(row[labelKey]).slice(0, 12))}</span></li>`
+    )).join('')}</ol></section>`;
+  }
+  if (state.statisticsControls.view === 'line') {
+    const width = 1000;
+    const points = rows.map((row, index) => {
+      const x = rows.length <= 1 ? width / 2 : 20 + index * (width - 40) / (rows.length - 1);
+      const y = 230 - 210 * num(row[measureKey]) / maximum;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    return `<section class="cs-stat-chart"><svg viewBox="0 0 ${width} 250" role="img" aria-label="Line chart of ${escapeHtml(measureKey)}"><polyline fill="none" stroke="var(--link)" stroke-width="3" points="${points}"></polyline></svg>`
+      + `<ol class="cs-stat-ranking cs-stat-ranking-split">${rows.map((row) => `<li><div class="cs-stat-rank-head"><span>${escapeHtml(row[labelKey])}</span><strong>${escapeHtml(statisticsFormatValue(row[measureKey], kind))}</strong></div></li>`).join('')}</ol></section>`;
+  }
+  return `<section class="cs-stat-chart"><ol class="cs-stat-ranking">${rows.map((row) => (
+    `<li><div class="cs-stat-rank-head"><span>${escapeHtml(row[labelKey])}</span><strong>${escapeHtml(statisticsFormatValue(row[measureKey], kind))}</strong></div>`
+    + `<div class="cs-stat-track"><span style="width:${(100 * num(row[measureKey]) / maximum).toFixed(3)}%"></span></div></li>`
+  )).join('')}</ol></section>`;
+}
+
+function statisticsDashboardContent(statistics, segment) {
   const asOf = statisticsTimestamp(statistics.generated_at);
-  const context = [
-    state.statisticsFilters.caseType ? state.statisticsFilters.caseType.toUpperCase() : 'all case types',
-    state.statisticsFilters.location || 'all locations',
-  ].join(' · ');
-  $('cs-entity-meta').textContent = `${nf.format(segment.cases)} cases · ${context} · ${asOf}`;
-  setStatus('loaded', `${nf.format(segment.cases)} cases in statistics segment`);
-
   const metrics = [
     statisticsMetric('Cases', segment.cases, 'distinct canonical records'),
     statisticsMetric('Docket entries', segment.features.docket.rows, `${nf.format(segment.features.docket.cases)} cases covered`),
@@ -1624,34 +1777,218 @@ function renderStatistics() {
   ].join('');
   const definitions = statistics.definitions || {};
   const overallSegment = statisticsSegment(statistics, {});
-  $('cs-body').innerHTML = `<main class="cs-statistics">
-    <header class="cs-stat-header">
-      <div>
-        <h2>Archive statistics</h2>
-        <p>Published KCSC corpus at the one-case grain. Filters apply to every metric and chart.</p>
-      </div>
-      <div class="cs-stat-filters" aria-label="Statistics filters">
-        <label>Case type<select id="cs-stat-type">${statisticsOptionList(statistics.filters.case_types, state.statisticsFilters.caseType, 'All types')}</select></label>
-        <label>Location<select id="cs-stat-location">${statisticsOptionList(statistics.filters.locations, state.statisticsFilters.location, 'All locations')}</select></label>
-      </div>
-    </header>
+  state.statisticsExport = null;
+  return `<header class="cs-stat-header"><div><h2>Archive statistics</h2><p>Published KCSC corpus at the one-case grain. Filters apply to every metric and chart.</p></div>
+    <div class="cs-stat-filters" aria-label="Statistics filters">
+      <label>Case type<select id="cs-stat-type">${statisticsOptionList(statistics.filters.case_types, state.statisticsFilters.caseType, 'All types')}</select></label>
+      <label>Location<select id="cs-stat-location">${statisticsOptionList(statistics.filters.locations, state.statisticsFilters.location, 'All locations')}</select></label>
+    </div></header>
     <section class="cs-stat-metrics" aria-label="Headline archive metrics">${metrics}</section>
-    <div class="cs-stat-grid">
-      ${statisticsTrend(segment.breakdowns.filing_year, segment.cases, overallSegment.breakdowns.filing_year)}
+    <div class="cs-stat-grid">${statisticsTrend(segment.breakdowns.filing_year, segment.cases, overallSegment.breakdowns.filing_year)}
       ${statisticsRanking('Case type mix', 'Cases by canonical case type.', segment.breakdowns.case_type, segment.cases)}
       ${statisticsRanking('Location mix', 'Cases by SEA or KNT suffix.', segment.breakdowns.location, segment.cases)}
       ${statisticsRanking('Status', 'Cases by normalized status group.', segment.breakdowns.status_group, segment.cases, { wide: true, split: true })}
       ${statisticsRanking('Portal node', 'Cases by preserved KCSC portal node.', segment.breakdowns.portal_node, segment.cases, { wide: true })}
-      ${statisticsFeatureCoverage(segment.features, segment.cases)}
-    </div>
-    <footer class="cs-stat-method">
-      <strong>Source and definitions</strong>
-      <span>Generated ${escapeHtml(asOf)} from ${escapeHtml(statistics.source)}.</span>
+      ${statisticsFeatureCoverage(segment.features, segment.cases)}</div>
+    <footer class="cs-stat-method"><strong>Source and definitions</strong><span>Generated ${escapeHtml(asOf)} from ${escapeHtml(statistics.source)}.</span>
       <span>Cases: ${escapeHtml(definitions.cases || 'Distinct canonical case records.')}</span>
       <span>Coverage: ${escapeHtml(definitions.feature_cases || 'Cases with at least one named feature row.')}</span>
-      <span>Rows: ${escapeHtml(definitions.feature_rows || 'A case may contribute multiple rows.')}</span>
-    </footer>
-  </main>`;
+      <span>Rows: ${escapeHtml(definitions.feature_rows || 'A case may contribute multiple rows.')}</span></footer>`;
+}
+
+function statisticsAggregateContent(segment) {
+  const controls = state.statisticsControls;
+  const rows = (segment.breakdowns[controls.aggregate] || []).map((row) => ({ label: row.value, value: row.cases }));
+  const needle = norm(controls.aggregateFilter);
+  const filtered = rows.filter((row) => !needle || norm(row.label).includes(needle));
+  const sorted = statisticsSortRows(filtered, 'label', 'value');
+  const shown = statisticsApplyLimit(sorted);
+  const extra = `<label>Group by<select data-statistics-control="aggregate">${statisticsSelectOptions([...STATISTICS_AGGREGATES], controls.aggregate)}</select></label>`;
+  const content = controls.view === 'table'
+    ? statisticsTable([{ key: 'label', label: STATISTICS_AGGREGATES.get(controls.aggregate) }, { key: 'value', label: 'Cases', numeric: true, render: (row) => escapeHtml(nf.format(row.value)) }], shown)
+    : statisticsChart(shown, 'label', 'value');
+  state.statisticsExport = { filename: `kcsc-aggregates-${controls.aggregate}.csv`, columns: [['Category', 'label'], ['Cases', 'value']], rows: sorted };
+  return `${statisticsCommonControls(extra, 'aggregateFilter')}<p class="cs-stat-result-state">${nf.format(shown.length)} of ${nf.format(filtered.length)} rows · ${escapeHtml(STATISTICS_AGGREGATES.get(controls.aggregate))}</p>${content}`;
+}
+
+async function ensureStatisticsRankingData(kind) {
+  const property = kind === 'rankings' ? 'attorneyRankings' : 'judgmentRankings';
+  if (state[property]) return state[property];
+  if (state.statisticsRankingPromises.has(kind)) return state.statisticsRankingPromises.get(kind);
+  const sourceKey = kind === 'rankings' ? 'attorney_rankings' : 'judgment_rankings';
+  const source = state.manifest?.statistics?.ranking_sources?.[sourceKey];
+  if (!source?.path) throw new Error(`${kind === 'rankings' ? 'Attorney' : 'Judgment'} rankings are not published in this data release.`);
+  const promise = (kind === 'rankings'
+    ? state.dataClient.attorneyRankings(state.manifest)
+    : state.dataClient.judgmentRankings(state.manifest)).then((result) => {
+    const data = result.data;
+    state[property] = data;
+    return data;
+  }).finally(() => state.statisticsRankingPromises.delete(kind));
+  state.statisticsRankingPromises.set(kind, promise);
+  return promise;
+}
+
+function statisticsRankingTopic() {
+  const topics = state.attorneyRankings?.topics || [];
+  return topics.find((topic) => topic.topic === state.statisticsControls.topic) || topics[0] || null;
+}
+
+function statisticsAttorneyRows() {
+  const controls = state.statisticsControls;
+  const topic = statisticsRankingTopic();
+  if (!topic) return { topic: null, rows: [] };
+  if (topic.topic !== controls.topic) controls.topic = topic.topic;
+  const category = topic.categories.some((item) => item.key === controls.category) ? controls.category : '';
+  const rows = [];
+  for (const attorney of topic.attorneys) {
+    if (isGenericCounselName(attorney.attorney_name)) continue;
+    const contribution = category
+      ? (attorney.category_contributions || []).find((item) => item.category_key === category)
+      : attorney;
+    if (!contribution || !num(contribution.matter_count)) continue;
+    const allMatters = num(attorney.all_matter_count);
+    const matters = num(contribution.matter_count);
+    rows.push({
+      rank: 0, attorney_id: attorney.attorney_id, attorney_name: attorney.attorney_name,
+      bar_number: attorney.bar_number || '', matter_count: matters,
+      matter_count_last_2_years: num(contribution.matter_count_last_2_years),
+      practice_share_percent: allMatters ? 100 * matters / allMatters : 0,
+      all_matter_count: allMatters,
+      judgment_total_amount: num(contribution.judgment_total_amount),
+      judgment_count: num(contribution.judgment_count),
+      largest_judgment_amount: num(contribution.largest_judgment_amount),
+      filing_years: contribution.first_filing_year && contribution.latest_filing_year
+        ? `${contribution.first_filing_year}-${contribution.latest_filing_year}` : '',
+    });
+  }
+  const ranked = [...rows].sort((left, right) => num(right[controls.measure]) - num(left[controls.measure])
+    || right.matter_count_last_2_years - left.matter_count_last_2_years
+    || right.matter_count - left.matter_count
+    || left.attorney_name.localeCompare(right.attorney_name));
+  let previous;
+  let rank = 0;
+  ranked.forEach((row, index) => {
+    if (index === 0 || row[controls.measure] !== previous) rank = index + 1;
+    row.rank = rank;
+    previous = row[controls.measure];
+  });
+  const needle = norm(controls.rankingFilter);
+  return { topic, rows: ranked.filter((row) => !needle || [row.attorney_name, row.bar_number, row.attorney_id].some((value) => norm(value).includes(needle))) };
+}
+
+function statisticsAttorneyContent() {
+  const controls = state.statisticsControls;
+  const { topic, rows } = statisticsAttorneyRows();
+  const sorted = statisticsSortRows(rows, 'attorney_name', controls.measure);
+  const shown = statisticsApplyLimit(sorted);
+  const measureKind = controls.measure.includes('amount') ? 'currency' : controls.measure === 'practice_share_percent' ? 'percent' : 'number';
+  const extra = `<label>Matter type<select data-statistics-control="topic">${statisticsSelectOptions(state.attorneyRankings.topics.map((item) => [item.topic, item.label]), topic.topic)}</select></label>
+    <label>Category<select data-statistics-control="category">${statisticsSelectOptions([['', 'All categories'], ...topic.categories.map((item) => [item.key, `${item.label} (${nf.format(item.case_count)})`])], controls.category)}</select></label>
+    <label>Measure<select data-statistics-control="measure">${statisticsSelectOptions([...STATISTICS_MEASURES], controls.measure)}</select></label>`;
+  const columns = [
+    { key: 'rank', label: '#', numeric: true }, { key: 'attorney_name', label: 'Attorney / counsel' },
+    { key: 'bar_number', label: 'Bar number' },
+    { key: 'matter_count_last_2_years', label: 'Matters within last 2 years', numeric: true, render: (row) => nf.format(row.matter_count_last_2_years) },
+    { key: 'matter_count', label: 'Matters', numeric: true, render: (row) => nf.format(row.matter_count) },
+    { key: 'practice_share_percent', label: 'Practice share', numeric: true, render: (row) => `${row.practice_share_percent.toFixed(2)}%` },
+    { key: 'all_matter_count', label: 'All matters', numeric: true, render: (row) => nf.format(row.all_matter_count) },
+    { key: 'filing_years', label: 'Filing years' },
+    { key: 'judgment_total_amount', label: 'Reported judgments', numeric: true, render: (row) => statisticsFormatValue(row.judgment_total_amount, 'currency') },
+    { key: 'judgment_count', label: 'Judgment cases', numeric: true, render: (row) => nf.format(row.judgment_count) },
+    { key: 'largest_judgment_amount', label: 'Largest reported judgment', numeric: true, render: (row) => statisticsFormatValue(row.largest_judgment_amount, 'currency') },
+  ];
+  const content = controls.view === 'table' ? statisticsTable(columns, shown) : statisticsChart(shown.slice(0, 100), 'attorney_name', controls.measure, measureKind);
+  state.statisticsExport = { filename: `kcsc-attorney-rankings-${topic.topic}.csv`, columns: columns.map((column) => [column.label, column.key]), rows: sorted };
+  return `${statisticsCommonControls(extra, 'rankingFilter')}<p class="cs-stat-result-state">${escapeHtml(topic.label)} · ${nf.format(shown.length)} of ${nf.format(rows.length)} ranked counsel identities · competition ranks · stable attorney IDs preserved in export</p>${content}`;
+}
+
+function statisticsJudgmentRows() {
+  const controls = state.statisticsControls;
+  const needle = norm(controls.judgmentFilter);
+  const rows = (state.judgmentRankings?.rows || []).filter((row) => !needle || [row.case_number, row.case_title, row.case_type, row.cause_of_action].some((value) => norm(value).includes(needle)));
+  return statisticsSortRows(rows, 'case_number', 'judgment_amount');
+}
+
+function statisticsJudgmentContent() {
+  const rows = statisticsJudgmentRows();
+  const shown = statisticsApplyLimit(rows);
+  const extra = '<label>Measure<select disabled><option>Reported active judgment amount</option></select></label>';
+  const columns = [
+    { key: 'rank', label: '#', numeric: true },
+    { key: 'case_number', label: 'Case number', render: (row) => `<a href="#case=${encodeURIComponent(row.case_number)}" data-case-open="${escapeHtml(row.case_number)}">${escapeHtml(row.case_number)}</a>` },
+    { key: 'case_title', label: 'Case title' }, { key: 'case_type', label: 'Case type' },
+    { key: 'cause_of_action', label: 'Cause of action' },
+    { key: 'judgment_amount', label: 'Reported active amount', numeric: true, render: (row) => statisticsFormatValue(row.judgment_amount, 'currency') },
+    { key: 'judgment_date', label: 'Latest judgment date' },
+    { key: 'component_count', label: 'Components', numeric: true, render: (row) => nf.format(row.component_count) },
+  ];
+  const content = state.statisticsControls.view === 'table' ? statisticsTable(columns, shown) : statisticsChart(shown.slice(0, 100), 'case_number', 'judgment_amount', 'currency');
+  state.statisticsExport = { filename: 'kcsc-judgment-rankings.csv', columns: columns.map((column) => [column.label, column.key]), rows };
+  return `${statisticsCommonControls(extra, 'judgmentFilter')}<p class="cs-stat-result-state">${nf.format(shown.length)} of ${nf.format(rows.length)} qualified cases · explicit positive dollar values from preserved Active judgment cells · components summed once per case</p>${content}`;
+}
+
+function csvValue(value) {
+  let string = value == null ? '' : String(value);
+  if (/^[=+\-@\t\r]/.test(string)) string = `'${string}`;
+  return /[",\n]/.test(string) ? `"${string.replace(/"/g, '""')}"` : string;
+}
+
+function exportStatisticsCsv() {
+  const current = state.statisticsExport;
+  if (!current) return;
+  const csv = [current.columns.map(([label]) => csvValue(label)).join(','), ...current.rows.map((row) => (
+    current.columns.map(([, key]) => csvValue(row[key])).join(',')
+  ))].join('\n') + '\n';
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = current.filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function renderStatistics() {
+  const statistics = state.manifest?.statistics;
+  $('cs-kicker').textContent = 'Statistics';
+  $('cs-entity-title').textContent = 'KCSC archive statistics';
+  $('cs-tabstrip').hidden = true;
+  if (!statistics) {
+    $('cs-entity-meta').textContent = 'statistics unavailable in this data release';
+    showBodyError('This KCSC data release does not include the versioned statistics contract.');
+    return;
+  }
+  if (!state.statisticsControls) state.statisticsControls = loadStatisticsControls();
+  const segment = statisticsSegment(statistics, state.statisticsFilters);
+  if (!segment) {
+    showBodyError('The selected statistics segment is unavailable.');
+    return;
+  }
+  const context = [state.statisticsFilters.caseType ? state.statisticsFilters.caseType.toUpperCase() : 'all case types', state.statisticsFilters.location || 'all locations'].join(' · ');
+  $('cs-entity-meta').textContent = `${nf.format(segment.cases)} cases · ${context} · ${statisticsTimestamp(statistics.generated_at)}`;
+  setStatus('loaded', `${nf.format(segment.cases)} cases in statistics segment`);
+  const mode = state.statisticsControls.mode;
+  let content;
+  if (mode === 'dashboard') content = statisticsDashboardContent(statistics, segment);
+  else if (mode === 'aggregates') content = statisticsAggregateContent(segment);
+  else {
+    const loaded = mode === 'rankings' ? state.attorneyRankings : state.judgmentRankings;
+    if (!loaded) {
+      state.statisticsExport = null;
+      content = `<div class="cs-stat-loading">Loading ${mode === 'rankings' ? 'attorney' : 'judgment'} rankings…</div>`;
+      ensureStatisticsRankingData(mode).then(() => {
+        if (state.scope === 'statistics' && state.statisticsControls.mode === mode) renderStatistics();
+      }).catch((error) => {
+        if (state.scope === 'statistics' && state.statisticsControls.mode === mode) {
+          $('cs-body').innerHTML = `<main class="cs-statistics">${statisticsModebar()}<div class="cs-stat-loading">${escapeHtml(error.message || String(error))}</div></main>`;
+          setStatus('ranking load error');
+        }
+      });
+    } else content = mode === 'rankings' ? statisticsAttorneyContent() : statisticsJudgmentContent();
+  }
+  $('cs-body').innerHTML = `<main class="cs-statistics">${statisticsModebar()}${content}</main>`;
 }
 
 function renderResults() {

@@ -37,6 +37,8 @@ Data contract:
 - `data/manifest.json`
 - `assets/js/kcsc-data-client.js` (`kcsc-viewer-data-client-v1`)
 - `assets/js/kcsc-statistics.js` (`kcsc-statistics-v1`)
+- `data/attorney-practice-rankings.json` (`kcsc-attorney-rankings-v1`)
+- `data/judgment-rankings.json` (`kcsc-judgment-rankings-v1`)
 - `archive/cases-index/manifest.json`
 - `archive/cases-index/<prefix>.ndjson`
 - `data/cases.parquet`
@@ -61,7 +63,11 @@ judgment, document-index, provenance, and raw-source features. Legacy manifests
 remain readable; new indexed filters appear only when the manifest declares the
 corresponding compact-index field and positive feature row count.
 
-The Statistics scope is backed by reconciled manifest aggregates and includes
-headline totals, filing-year trends, type/location/status/node breakdowns, and
-case-versus-row feature coverage. Its case-type and location controls apply to
-every metric and chart without downloading the full case index.
+The Statistics scope now follows the shared SFSC interaction model: Aggregates,
+Dashboard, Attorney rankings, and Judgment rankings. It includes headline
+totals, filing-year trends, type/location/status/node breakdowns, case-versus-row
+feature coverage, seven attorney ranking measures, category contributions,
+competition ranks, explicit-active-amount judgment rankings, four views,
+sorting, limits, text filters, persisted controls, and CSV export. Ranking
+resources load lazily through the unified data client; opening the dashboard
+still does not download the full case index or either ranking payload.

@@ -76,12 +76,25 @@ assert(app.includes('await client.manifest()'), 'validated data manifest load is
 assert(dataClient.includes("KCSC_DATA_CLIENT_FORMAT = 'kcsc-viewer-data-client-v1'"), 'viewer data client contract is unversioned');
 assert(dataClient.includes('validateKcscManifest'), 'KCSC data manifest validation is missing');
 assert(dataClient.includes('validateKcscStatistics'), 'statistics contract is not validated by the unified data client');
+assert(dataClient.includes('async function attorneyRankings') && dataClient.includes('async function judgmentRankings'), 'merged-client ranking operations are missing');
 assert(statistics.includes("KCSC_STATISTICS_FORMAT = 'kcsc-statistics-v1'"), 'statistics contract is unversioned');
+assert(statistics.includes("KCSC_ATTORNEY_RANKINGS_FORMAT = 'kcsc-attorney-rankings-v1'"), 'attorney ranking contract is unversioned');
+assert(statistics.includes("KCSC_JUDGMENT_RANKINGS_FORMAT = 'kcsc-judgment-rankings-v1'"), 'judgment ranking contract is unversioned');
 assert(app.includes('function renderStatistics()'), 'statistics dashboard renderer is missing');
 assert(app.includes('function requestedScopeFromLocation()'), 'shareable statistics scope routing is missing');
 assert(app.includes("$('cs-statistics-btn').addEventListener('click'"), 'visible statistics navigation is not wired');
 assert(app.includes('statisticsFeatureCoverage'), 'feature coverage statistics are missing');
 assert(app.includes('statisticsTrend'), 'filing trend statistics are missing');
+assert(app.includes("['aggregates', 'dashboard', 'rankings', 'judgments']"), 'SFSC-compatible statistics modes are missing');
+assert(app.indexOf("['aggregates', 'Aggregates']") < app.indexOf("['dashboard', 'Dashboard']")
+  && app.indexOf("['dashboard', 'Dashboard']") < app.indexOf("['rankings', 'Attorney rankings']"),
+  'Dashboard must sit immediately after Aggregates and before rankings');
+assert(app.includes('function statisticsAttorneyRows()'), 'attorney ranking calculations are missing');
+assert(app.includes('function statisticsJudgmentRows()'), 'judgment ranking calculations are missing');
+assert(app.includes('competition ranks'), 'attorney ranking tie semantics are not disclosed');
+assert(app.includes('function exportStatisticsCsv()'), 'statistics CSV export is missing');
+assert(app.includes("STATISTICS_STORAGE_KEY = 'kcsc.statistics.controls.v2'"), 'statistics controls are not persisted');
+assert(app.includes("['table', 'Table'], ['horizontal', 'Horizontal bars'], ['vertical', 'Vertical bars'], ['line', 'Line']"), 'statistics view parity is incomplete');
 assert(index.includes('id="cs-stat-type"') === false, 'runtime statistics controls must not be duplicated in static markup');
 assert(dataClient.includes('request escaped configured base'), 'data client must reject cross-base requests');
 assert(app.includes('state.manifest?.archive?.case_directory'), 'compact case directory load is missing');

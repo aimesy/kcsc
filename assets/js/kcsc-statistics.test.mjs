@@ -4,6 +4,8 @@ import {
   statisticsCoveragePercent,
   statisticsSegment,
   statisticsSegmentId,
+  validateKcscAttorneyRankings,
+  validateKcscJudgmentRankings,
   validateKcscStatistics,
 } from './kcsc-statistics.js';
 
@@ -74,5 +76,37 @@ assert.throws(() => validateKcscStatistics(badRows, {
   features: manifestFeatures,
   generatedAt: '2026-08-27T00:00:00Z',
 }), /do not match/);
+
+const attorneyRankings = validateKcscAttorneyRankings({
+  format: 'kcsc-attorney-rankings-v1',
+  topics: [{
+    topic: 'all_matters',
+    label: 'All matters',
+    categories: [{ key: 'civil', label: 'Civil', case_count: 1 }],
+    attorneys: [{
+      attorney_id: 'bar:123', attorney_name: 'Counsel One', bar_number: '123',
+      matter_count: 1, matter_count_last_2_years: 1, all_matter_count: 1,
+      judgment_count: 1,
+      category_contributions: [{ category_key: 'civil' }],
+    }],
+  }],
+});
+assert.equal(attorneyRankings.topics[0].attorneys[0].attorney_id, 'bar:123');
+assert.throws(() => validateKcscAttorneyRankings({
+  ...attorneyRankings,
+  topics: [{ ...attorneyRankings.topics[0], attorneys: [
+    attorneyRankings.topics[0].attorneys[0], attorneyRankings.topics[0].attorneys[0],
+  ] }],
+}), /invalid attorney identity/);
+
+const judgmentRankings = validateKcscJudgmentRankings({
+  format: 'kcsc-judgment-rankings-v1',
+  rows: [{ rank: 1, case_number: '262000001SEA', judgment_amount: 1200.5 }],
+});
+assert.equal(judgmentRankings.rows[0].judgment_amount, 1200.5);
+assert.throws(() => validateKcscJudgmentRankings({
+  format: 'kcsc-judgment-rankings-v1',
+  rows: [{ rank: 1, case_number: '262000001SEA', judgment_amount: 0 }],
+}), /invalid KCSC judgment ranking row/);
 
 console.log('KCSC statistics checks passed');

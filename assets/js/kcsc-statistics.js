@@ -1,4 +1,6 @@
 export const KCSC_STATISTICS_FORMAT = 'kcsc-statistics-v1';
+export const KCSC_ATTORNEY_RANKINGS_FORMAT = 'kcsc-attorney-rankings-v1';
+export const KCSC_JUDGMENT_RANKINGS_FORMAT = 'kcsc-judgment-rankings-v1';
 
 const BREAKDOWN_FIELDS = [
   'case_type',
@@ -26,6 +28,35 @@ function cleanValues(values, label) {
     throw new Error(`${label} must contain unique nonempty values`);
   }
   return cleaned;
+}
+
+function safePath(value) {
+  const path = clean(value).replace(/\\/g, '/');
+  if (!path || path.startsWith('/') || path.includes('//') || path.includes(':')
+    || path.includes('?') || path.includes('#')
+    || path.split('/').some((part) => part === '..' || part === '.')) return '';
+  return path;
+}
+
+function validateRankingSources(sources) {
+  if (sources == null) return;
+  if (!sources || typeof sources !== 'object' || Array.isArray(sources)) {
+    throw new Error('statistics.ranking_sources must be an object');
+  }
+  for (const [name, format] of [
+    ['attorney_rankings', KCSC_ATTORNEY_RANKINGS_FORMAT],
+    ['judgment_rankings', KCSC_JUDGMENT_RANKINGS_FORMAT],
+  ]) {
+    const source = sources[name];
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      throw new Error(`statistics.ranking_sources.${name} is missing`);
+    }
+    if (clean(source.format) !== format || !safePath(source.path)) {
+      throw new Error(`statistics.ranking_sources.${name} is invalid`);
+    }
+    count(source.rows, `statistics.ranking_sources.${name}.rows`);
+    count(source.size_bytes, `statistics.ranking_sources.${name}.size_bytes`);
+  }
 }
 
 export function statisticsSegmentId(caseType = '', location = '') {
@@ -88,6 +119,7 @@ export function validateKcscStatistics(statistics, options = {}) {
   const featureNames = Object.keys(options.features || {}).sort();
   if (!featureNames.length) throw new Error('KCSC statistics require data manifest feature descriptors');
   if (!Array.isArray(statistics.segments)) throw new Error('statistics.segments must be an array');
+  validateRankingSources(statistics.ranking_sources);
 
   const expectedIds = new Set(['all']);
   caseTypes.forEach((caseType) => expectedIds.add(statisticsSegmentId(caseType, '')));
@@ -144,6 +176,57 @@ export function validateKcscStatistics(statistics, options = {}) {
   }
   Object.defineProperty(statistics, '_segmentsById', { value: byId, configurable: true });
   return statistics;
+}
+
+export function validateKcscAttorneyRankings(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)
+    || clean(data.format) !== KCSC_ATTORNEY_RANKINGS_FORMAT
+    || !Array.isArray(data.topics)) throw new Error('invalid KCSC attorney rankings');
+  const topicKeys = new Set();
+  for (const [topicIndex, topic] of data.topics.entries()) {
+    const key = clean(topic?.topic);
+    if (!key || topicKeys.has(key) || !Array.isArray(topic?.categories) || !Array.isArray(topic?.attorneys)) {
+      throw new Error(`invalid KCSC attorney ranking topic ${topicIndex}`);
+    }
+    topicKeys.add(key);
+    const categoryKeys = new Set(topic.categories.map((category) => clean(category?.key)).filter(Boolean));
+    if (categoryKeys.size !== topic.categories.length) throw new Error(`invalid categories for ${key}`);
+    const attorneyIds = new Set();
+    for (const attorney of topic.attorneys) {
+      const attorneyId = clean(attorney?.attorney_id);
+      if (!attorneyId || attorneyIds.has(attorneyId) || !clean(attorney?.attorney_name)) {
+        throw new Error(`invalid attorney identity in ${key}`);
+      }
+      attorneyIds.add(attorneyId);
+      for (const field of [
+        'matter_count', 'matter_count_last_2_years', 'all_matter_count',
+        'judgment_count',
+      ]) count(attorney[field], `${key}.${attorneyId}.${field}`);
+      for (const contribution of attorney.category_contributions || []) {
+        if (!categoryKeys.has(clean(contribution?.category_key))) {
+          throw new Error(`unknown category contribution in ${key}`);
+        }
+      }
+    }
+  }
+  return data;
+}
+
+export function validateKcscJudgmentRankings(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)
+    || clean(data.format) !== KCSC_JUDGMENT_RANKINGS_FORMAT
+    || !Array.isArray(data.rows)) throw new Error('invalid KCSC judgment rankings');
+  const cases = new Set();
+  for (const [index, row] of data.rows.entries()) {
+    const caseNumber = clean(row?.case_number);
+    const amount = Number(row?.judgment_amount);
+    if (!caseNumber || cases.has(caseNumber) || !Number.isFinite(amount) || amount <= 0
+      || !Number.isSafeInteger(row?.rank) || row.rank < 1) {
+      throw new Error(`invalid KCSC judgment ranking row ${index}`);
+    }
+    cases.add(caseNumber);
+  }
+  return data;
 }
 
 export function statisticsSegment(statistics, filters = {}) {

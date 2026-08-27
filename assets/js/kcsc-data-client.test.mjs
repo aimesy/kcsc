@@ -106,6 +106,35 @@ assert.deepEqual(canonicalFeatureCounts(record), {
   documents: 2,
 });
 assert.equal(describeKcscDataClient().format, 'kcsc-viewer-data-client-v1');
+assert.deepEqual(
+  describeKcscDataClient().operations.slice(1, 4),
+  ['statistics', 'attorney-rankings', 'judgment-rankings'],
+);
+
+const rankingManifest = {
+  statistics: {
+    ranking_sources: {
+      attorney_rankings: { path: 'data/attorney-practice-rankings.json' },
+      judgment_rankings: { path: 'data/judgment-rankings.json' },
+    },
+  },
+};
+const attorneyRankings = {
+  format: 'kcsc-attorney-rankings-v1',
+  topics: [{
+    topic: 'all_matters', label: 'All matters',
+    categories: [{ key: 'civil', label: 'Civil', case_count: 1 }],
+    attorneys: [{
+      attorney_id: 'bar:1', attorney_name: 'Counsel One', matter_count: 1,
+      matter_count_last_2_years: 1, all_matter_count: 1, judgment_count: 0,
+      category_contributions: [{ category_key: 'civil' }],
+    }],
+  }],
+};
+const judgmentRankings = {
+  format: 'kcsc-judgment-rankings-v1',
+  rows: [{ rank: 1, case_number: '262000011SEA', judgment_amount: 10 }],
+};
 
 const requests = [];
 const client = createKcscDataClient({
@@ -115,12 +144,20 @@ const client = createKcscDataClient({
     if (String(input).endsWith('data/manifest.json')) {
       return new Response(JSON.stringify(manifest), { headers: { 'Content-Type': 'application/json' } });
     }
+    if (String(input).endsWith('data/attorney-practice-rankings.json')) {
+      return new Response(JSON.stringify(attorneyRankings));
+    }
+    if (String(input).endsWith('data/judgment-rankings.json')) {
+      return new Response(JSON.stringify(judgmentRankings));
+    }
     return new Response(JSON.stringify(record));
   },
 });
 assert.equal((await client.manifest()).data.archive.cases, 2);
 assert.equal((await client.caseRecord('26-2-00001-1 SEA')).data.case_number, '262000011SEA');
-assert.equal(requests.length, 2);
+assert.equal((await client.attorneyRankings(rankingManifest)).data.topics[0].topic, 'all_matters');
+assert.equal((await client.judgmentRankings(rankingManifest)).data.rows[0].judgment_amount, 10);
+assert.equal(requests.length, 4);
 await assert.rejects(client.fetch('https://foreign.example/data.json'), /escaped configured base/);
 
 console.log('KCSC data client checks passed');

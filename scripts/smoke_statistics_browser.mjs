@@ -81,7 +81,7 @@ async function evaluate(expression) {
 }
 
 async function waitFor(expression, label) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     if (await evaluate(expression)) return;
     await delay(100);
   }
@@ -136,6 +136,8 @@ try {
     cards: document.querySelectorAll('.cs-stat-card').length,
     coverage: document.querySelectorAll('.cs-stat-coverage li').length,
     years: document.querySelectorAll('.cs-stat-trend li').length,
+    modes: [...document.querySelectorAll('.cs-stat-mode-tab')].map((tab) => tab.textContent.trim()),
+    selectedMode: document.querySelector('.cs-stat-mode-tab[aria-selected="true"]')?.textContent.trim(),
     visibleNavigation: ${JSON.stringify(visibleNavigation)},
     navigationActive: document.getElementById('cs-statistics-btn')?.classList.contains('active'),
     shareableScope: new URL(location.href).searchParams.get('scope'),
@@ -163,6 +165,29 @@ try {
     cases: document.querySelector('.cs-stat-metric strong')?.title,
     meta: document.getElementById('cs-entity-meta')?.textContent,
   }))()`);
+
+  let parity = null;
+  if (manifest.statistics.ranking_sources?.attorney_rankings
+      && manifest.statistics.ranking_sources?.judgment_rankings) {
+    await evaluate("document.querySelector('[data-statistics-mode=aggregates]').click()");
+    await waitFor("document.querySelectorAll('.cs-stat-table tbody tr').length > 0", 'aggregate table');
+    const aggregateRows = await evaluate("document.querySelectorAll('.cs-stat-table tbody tr').length");
+    await evaluate("document.querySelector('[data-statistics-mode=rankings]').click()");
+    await waitFor("document.querySelectorAll('.cs-stat-table tbody tr').length > 0", 'attorney rankings');
+    const attorneyRows = await evaluate("document.querySelectorAll('.cs-stat-table tbody tr').length");
+    await evaluate("document.querySelector('[data-statistics-mode=judgments]').click()");
+    await waitFor("document.querySelectorAll('.cs-stat-table tbody tr').length > 0", 'judgment rankings');
+    const judgmentRows = await evaluate("document.querySelectorAll('.cs-stat-table tbody tr').length");
+    parity = await evaluate(`(() => ({
+      aggregateRows: ${JSON.stringify(aggregateRows)},
+      attorneyRows: ${JSON.stringify(attorneyRows)},
+      judgmentRows: ${JSON.stringify(judgmentRows)},
+      controls: document.querySelectorAll('.cs-stat-controls select, .cs-stat-controls input').length,
+      csv: Boolean(document.querySelector('[data-statistics-export]')),
+    }))()`);
+    await evaluate("document.querySelector('[data-statistics-mode=dashboard]').click()");
+    await waitFor("document.querySelectorAll('.cs-stat-metric').length === 6", 'restored dashboard');
+  }
 
   const desktopShot = await command('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync('/tmp/kcsc-statistics-desktop.png', Buffer.from(desktopShot.data, 'base64'));
@@ -192,6 +217,14 @@ try {
     || !desktop.visibleNavigation || !desktop.navigationActive || desktop.shareableScope !== 'statistics') {
     throw new Error(`unexpected desktop statistics state: ${JSON.stringify(desktop)}`);
   }
+  if (desktop.modes.join('|') !== 'Aggregates|Dashboard|Attorney rankings|Judgment rankings'
+    || desktop.selectedMode !== 'Dashboard') {
+    throw new Error(`statistics mode parity failed: ${JSON.stringify(desktop)}`);
+  }
+  if (parity && (parity.aggregateRows < 1 || parity.attorneyRows < 1 || parity.judgmentRows < 1
+    || parity.controls < 5 || !parity.csv)) {
+    throw new Error(`ranking browser parity failed: ${JSON.stringify(parity)}`);
+  }
   if (desktop.metrics !== 6 || desktop.cards !== 6 || desktop.coverage !== 9 || desktop.years < 8
     || !desktop.controlsHidden || desktop.overflow) {
     throw new Error(`desktop statistics layout failed: ${JSON.stringify(desktop)}`);
@@ -205,7 +238,7 @@ try {
   }
   if (runtimeErrors.length) throw new Error(`browser errors: ${runtimeErrors.join(' | ')}`);
 
-  console.log(JSON.stringify({ desktop, filtered, mobile, runtimeErrors }));
+  console.log(JSON.stringify({ desktop, filtered, parity, mobile, runtimeErrors }));
 } finally {
   for (const request of pending.values()) {
     clearTimeout(request.timer);

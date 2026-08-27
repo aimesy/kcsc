@@ -3,7 +3,11 @@ import {
   fetchTextWithProgress,
   responseContentLength,
 } from './load-progress.js';
-import { validateKcscStatistics } from './kcsc-statistics.js';
+import {
+  validateKcscAttorneyRankings,
+  validateKcscJudgmentRankings,
+  validateKcscStatistics,
+} from './kcsc-statistics.js';
 
 export const KCSC_DATA_CLIENT_FORMAT = 'kcsc-viewer-data-client-v1';
 export const KCSC_DATA_MANIFEST_FORMAT = 'kcsc-data-manifest-v1';
@@ -200,7 +204,10 @@ export function describeKcscDataClient() {
   return {
     format: KCSC_DATA_CLIENT_FORMAT,
     manifestFormat: KCSC_DATA_MANIFEST_FORMAT,
-    operations: ['manifest', 'statistics', 'directory', 'index', 'parquet', 'case'],
+    operations: [
+      'manifest', 'statistics', 'attorney-rankings', 'judgment-rankings',
+      'directory', 'index', 'parquet', 'case',
+    ],
     detailFeatures: [
       'summary',
       'docket',
@@ -316,13 +323,40 @@ export function createKcscDataClient(options = {}) {
     return json(`archive/cases/${encodeURIComponent(canonical)}.json`, { cache: 'no-cache' }, progress);
   }
 
+  async function rankingResource(manifestData, sourceName, validator, progress = {}) {
+    const source = manifestData?.statistics?.ranking_sources?.[sourceName];
+    if (!source?.path) throw new Error(`KCSC ${sourceName.replaceAll('_', ' ')} are unavailable`);
+    const result = await json(source.path, { cache: 'no-cache' }, progress);
+    return { ...result, data: validator(result.data) };
+  }
+
+  async function attorneyRankings(manifestData, progress = {}) {
+    return rankingResource(
+      manifestData,
+      'attorney_rankings',
+      validateKcscAttorneyRankings,
+      progress,
+    );
+  }
+
+  async function judgmentRankings(manifestData, progress = {}) {
+    return rankingResource(
+      manifestData,
+      'judgment_rankings',
+      validateKcscJudgmentRankings,
+      progress,
+    );
+  }
+
   return {
+    attorneyRankings,
     base: base.href,
     buffer,
     caseRecord,
     descriptor: describeKcscDataClient(),
     fetch: fetchRequest,
     json,
+    judgmentRankings,
     manifest,
     text,
     url,

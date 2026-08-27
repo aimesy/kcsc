@@ -902,6 +902,52 @@
       padding-bottom: 0.75rem;
       border-bottom: 1px solid var(--rule);
     }
+    .cs-stat-modebar {
+      display: flex; align-items: stretch; min-width: 0; margin-bottom: 0.75rem;
+      border-bottom: 1px solid var(--rule); background: var(--paper-2);
+    }
+    .cs-stat-mode-tab {
+      position: relative; min-height: 38px; border: 0; border-right: 1px solid var(--rule);
+      border-radius: 0; padding: 0.45rem 0.8rem; background: transparent; color: var(--ink-3);
+      font: 0.68rem var(--font-mono); cursor: pointer;
+    }
+    .cs-stat-mode-tab:first-child { border-left: 1px solid var(--rule); }
+    .cs-stat-mode-tab:hover { background: var(--plain); color: var(--ink); }
+    .cs-stat-mode-tab[aria-selected="true"] { background: var(--paper); color: var(--ink); font-weight: 700; }
+    .cs-stat-mode-tab[aria-selected="true"]::after {
+      content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--accent-2);
+    }
+    .cs-stat-controls {
+      display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: 0.55rem;
+      margin-bottom: 0.75rem; padding: 0.65rem; border: 1px solid var(--rule); background: var(--plain-soft);
+    }
+    .cs-stat-controls label {
+      display: grid; gap: 0.2rem; min-width: 0; color: var(--ink-3);
+      font: 0.6rem var(--font-mono); text-transform: uppercase;
+    }
+    .cs-stat-controls select,
+    .cs-stat-controls input {
+      box-sizing: border-box; width: 100%; min-width: 0; height: 30px;
+      border: 1px solid var(--rule); border-radius: 2px; padding: 0.2rem 0.35rem;
+      background: var(--paper); color: var(--ink); font: 0.67rem var(--font-mono); text-transform: none;
+    }
+    .cs-stat-controls .cs-stat-export { align-self: end; height: 30px; }
+    .cs-stat-result-state {
+      margin: 0 0 0.55rem; color: var(--ink-3); font: 0.63rem/1.4 var(--font-mono);
+    }
+    .cs-stat-table-wrap { overflow: auto; border: 1px solid var(--rule); background: var(--paper); }
+    .cs-stat-table { width: 100%; border-collapse: collapse; font: 0.66rem/1.35 var(--font-mono); }
+    .cs-stat-table th,
+    .cs-stat-table td { padding: 0.42rem 0.5rem; border-right: 1px solid var(--rule-2); border-bottom: 1px solid var(--rule-2); text-align: left; }
+    .cs-stat-table th { position: sticky; top: 0; z-index: 1; background: var(--paper-2); color: var(--ink-3); text-transform: uppercase; }
+    .cs-stat-table td.is-number,
+    .cs-stat-table th.is-number { text-align: right; white-space: nowrap; }
+    .cs-stat-table tbody tr:hover td { background: var(--row-hover); }
+    .cs-stat-table a { color: var(--link); text-decoration: none; border-bottom: 1px dotted currentColor; }
+    .cs-stat-chart { border: 1px solid var(--rule); background: var(--paper); }
+    .cs-stat-chart > svg { display: block; width: 100%; min-width: 680px; height: auto; border-bottom: 1px solid var(--rule-2); }
+    .cs-stat-chart .cs-stat-ranking { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 1.2rem; }
+    .cs-stat-loading { padding: 2rem; border: 1px solid var(--rule); background: var(--paper); color: var(--ink-3); text-align: center; }
     .cs-stat-header h2 {
       margin: 0;
       font-family: var(--font-serif);
@@ -1162,12 +1208,16 @@
       .cs-kv-grid { grid-template-columns: 1fr; }
       .cs-statistics { padding: 0.55rem 0.55rem 2.8rem; }
       .cs-stat-header { align-items: stretch; flex-direction: column; }
+      .cs-stat-modebar { overflow-x: auto; }
+      .cs-stat-mode-tab { flex: 1 0 auto; padding-inline: 0.55rem; }
+      .cs-stat-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .cs-stat-filters label { flex: 1 1 9rem; }
       .cs-stat-filters select { width: 100%; }
       .cs-stat-grid { grid-template-columns: 1fr; }
       .cs-stat-card-wide { grid-column: auto; }
       .cs-stat-coverage { grid-template-columns: 1fr; }
       .cs-stat-ranking-split { grid-template-columns: 1fr; }
+      .cs-stat-chart .cs-stat-ranking { grid-template-columns: 1fr; }
       .cs-record-table:not(.cs-document-table) th:nth-child(n+4),
       .cs-record-table:not(.cs-document-table) td:nth-child(n+4) { display: none; }
     }
@@ -1175,6 +1225,7 @@
       .cs-load-progress { min-height: 154px; padding: 12px; }
       .cs-load-progress-stats { grid-template-columns: 1fr; }
       .cs-stat-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .cs-stat-controls { grid-template-columns: 1fr; }
     }
   </style>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/theme.css">
@@ -1282,7 +1333,7 @@
       <div class="cs-hint">Loading archived dockets...</div>
     </div>
   </div>
-  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260827-statistics-1"></script>
+  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260827-statistics-parity-1"></script>
   <footer aria-label="Terms" style="position:fixed;right:.75rem;bottom:.5rem;z-index:var(--amyc-public-records-footer-z, 80);font:11px/1.2 system-ui,sans-serif;opacity:.58"><a href="./terms.html" style="color:inherit;text-decoration:none">T&amp;Cs</a></footer>
 </body>
 </html>
