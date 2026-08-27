@@ -1888,6 +1888,7 @@ function statisticsAttorneyContent() {
     <label>Measure<select data-statistics-control="measure">${statisticsSelectOptions([...STATISTICS_MEASURES], controls.measure)}</select></label>`;
   const columns = [
     { key: 'rank', label: '#', numeric: true }, { key: 'attorney_name', label: 'Attorney / counsel' },
+    { key: 'attorney_id', label: 'Attorney ID' },
     { key: 'bar_number', label: 'Bar number' },
     { key: 'matter_count_last_2_years', label: 'Matters within last 2 years', numeric: true, render: (row) => nf.format(row.matter_count_last_2_years) },
     { key: 'matter_count', label: 'Matters', numeric: true, render: (row) => nf.format(row.matter_count) },
@@ -1906,7 +1907,12 @@ function statisticsAttorneyContent() {
 function statisticsJudgmentRows() {
   const controls = state.statisticsControls;
   const needle = norm(controls.judgmentFilter);
-  const rows = (state.judgmentRankings?.rows || []).filter((row) => !needle || [row.case_number, row.case_title, row.case_type, row.cause_of_action].some((value) => norm(value).includes(needle)));
+  const rows = (state.judgmentRankings?.rows || []).map((row) => ({
+    ...row,
+    component_summary: (row.components || []).map((component) => (
+      `${component.label || 'Component'}: ${statisticsFormatValue(component.amount, 'currency')}`
+    )).join(' · '),
+  })).filter((row) => !needle || [row.case_number, row.case_title, row.case_type, row.cause_of_action, row.component_summary].some((value) => norm(value).includes(needle)));
   return statisticsSortRows(rows, 'case_number', 'judgment_amount');
 }
 
@@ -1922,6 +1928,7 @@ function statisticsJudgmentContent() {
     { key: 'judgment_amount', label: 'Reported active amount', numeric: true, render: (row) => statisticsFormatValue(row.judgment_amount, 'currency') },
     { key: 'judgment_date', label: 'Latest judgment date' },
     { key: 'component_count', label: 'Components', numeric: true, render: (row) => nf.format(row.component_count) },
+    { key: 'component_summary', label: 'Reported components' },
   ];
   const content = state.statisticsControls.view === 'table' ? statisticsTable(columns, shown) : statisticsChart(shown.slice(0, 100), 'case_number', 'judgment_amount', 'currency');
   state.statisticsExport = { filename: 'kcsc-judgment-rankings.csv', columns: columns.map((column) => [column.label, column.key]), rows };
