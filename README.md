@@ -35,6 +35,8 @@ http://127.0.0.1:8765/kcsc/?dataBase=../kcsc-data/
 Data contract:
 
 - `data/manifest.json`
+- `assets/js/kcsc-data-client.js` (`kcsc-viewer-data-client-v1`)
+- `assets/js/kcsc-statistics.js` (`kcsc-statistics-v1`)
 - `archive/cases-index/manifest.json`
 - `archive/cases-index/<prefix>.ndjson`
 - `data/cases.parquet`
@@ -43,9 +45,23 @@ Data contract:
 - `data/attorneys.parquet`
 - `data/representation.parquet`
 - `data/calendar.parquet`
+- `data/payments.parquet`
 - `archive/cases/<case_number>.json`
 
 KCSC does not yet have document-byte capture. The viewer surfaces deferred
 document rows from each case JSON instead of pretending document downloads exist.
 
 [T&Cs](https://kcsc.amyc.us/terms.html)
+
+The shared viewer data client validates `kcsc-data-manifest-v1`, keeps every
+manifest/index/parquet/case request inside the configured data base, and exposes
+one capability contract for future merged access clients. Canonical profiles
+surface docket, hearing, party, counsel, representation, payment, charge,
+judgment, document-index, provenance, and raw-source features. Legacy manifests
+remain readable; new indexed filters appear only when the manifest declares the
+corresponding compact-index field and positive feature row count.
+
+The Statistics scope is backed by reconciled manifest aggregates and includes
+headline totals, filing-year trends, type/location/status/node breakdowns, and
+case-versus-row feature coverage. Its case-type and location controls apply to
+every metric and chart without downloading the full case index.

@@ -19,6 +19,8 @@ function assert(condition, message) {
 const index = read('index.html');
 const app = read('assets/js/kcsc-viewer.js');
 const terms = read('terms.html');
+const dataClient = read('assets/js/kcsc-data-client.js');
+const statistics = read('assets/js/kcsc-statistics.js');
 const sharedThemeAssets = new Set([
   'theme.css',
   'theme-bar.css',
@@ -65,9 +67,23 @@ assert(!index.includes('<span id="cs-scope-label">Cases</span>&nbsp;v'), 'scope 
 assert(!index.includes('<span id="cs-scope-label">Cases</span> v'), 'scope button must not render a literal v');
 assert(index.includes('id="cs-scope-menu" role="radiogroup" aria-label="Search scope"'), 'scope menu must use SFSC radiogroup semantics');
 assert(index.includes('value="parties"') && index.includes('value="counsel"'), 'KCSC entity scopes are missing');
+assert(index.includes('value="statistics"'), 'KCSC statistics scope is missing');
+assert(index.includes('id="cs-statistics-btn"'), 'visible statistics navigation button is missing');
 assert(app.includes("raw.githubusercontent.com/aimesy/kcsc-data/master"), 'viewer is not wired to kcsc-data');
 assert(app.includes("setAttribute('aria-expanded'"), 'scope button must update aria-expanded');
-assert(app.includes('data/manifest.json'), 'data manifest load is missing');
+assert(app.includes('createKcscDataClient'), 'unified KCSC data client is missing');
+assert(app.includes('await client.manifest()'), 'validated data manifest load is missing');
+assert(dataClient.includes("KCSC_DATA_CLIENT_FORMAT = 'kcsc-viewer-data-client-v1'"), 'viewer data client contract is unversioned');
+assert(dataClient.includes('validateKcscManifest'), 'KCSC data manifest validation is missing');
+assert(dataClient.includes('validateKcscStatistics'), 'statistics contract is not validated by the unified data client');
+assert(statistics.includes("KCSC_STATISTICS_FORMAT = 'kcsc-statistics-v1'"), 'statistics contract is unversioned');
+assert(app.includes('function renderStatistics()'), 'statistics dashboard renderer is missing');
+assert(app.includes('function requestedScopeFromLocation()'), 'shareable statistics scope routing is missing');
+assert(app.includes("$('cs-statistics-btn').addEventListener('click'"), 'visible statistics navigation is not wired');
+assert(app.includes('statisticsFeatureCoverage'), 'feature coverage statistics are missing');
+assert(app.includes('statisticsTrend'), 'filing trend statistics are missing');
+assert(index.includes('id="cs-stat-type"') === false, 'runtime statistics controls must not be duplicated in static markup');
+assert(dataClient.includes('request escaped configured base'), 'data client must reject cross-base requests');
 assert(app.includes('state.manifest?.archive?.case_directory'), 'compact case directory load is missing');
 assert(app.includes('validateDirectoryManifest'), 'case directory validation is missing');
 assert(app.includes('createDirectoryClient'), 'shared case shard cache is missing');
@@ -90,7 +106,15 @@ assert(app.includes('createLoadProgress'), 'visible loading progress is missing'
 assert(app.includes('REQUEST_TIMEOUT_MS = 20000'), 'case request timeout must match SFSC');
 assert(app.includes('safeHttpHref'), 'external case links must be protocol checked');
 assert(!app.includes("await registerParquet(tableName, path)"), 'viewer must not materialize all parquet tables at startup');
-assert(app.includes('archive/cases/${encodeURIComponent(canonical)}.json'), 'lazy per-case JSON load is missing');
+assert(app.includes('state.dataClient.caseRecord(canonical'), 'lazy per-case JSON load is missing');
+assert(app.includes('renderRepresentation(representationRows(record))'), 'representation detail integration is missing');
+assert(app.includes('renderPayments(record.payments || [])'), 'payment detail integration is missing');
+assert(app.includes("renderStructuredSourceRows('Charges'"), 'structured charge rendering is missing');
+assert(app.includes("renderStructuredSourceRows('Judgments'"), 'structured judgment rendering is missing');
+assert(index.includes('data-feature="representation"'), 'representation filter capability is missing');
+assert(index.includes('data-feature="charges"'), 'charge filter capability is missing');
+assert(index.includes('data-feature="judgments"'), 'judgment filter capability is missing');
+assert(index.includes('data-feature="payments"'), 'payment filter capability is missing');
 assert(!app.includes('globalTextSearch'), 'dead global text search flag must not remain');
 assert(!app.includes('has_deferred_documents'), 'viewer must not expose stale deferred document naming');
 assert(!app.includes('document bytes deferred'), 'viewer must not surface stale deferred document wording');

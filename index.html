@@ -219,6 +219,8 @@
       color: var(--ink);
       border-color: var(--ink-3);
     }
+    .hbtn[hidden],
+    .cs-search[hidden] { display: none; }
     .cs-data-source { color: var(--link); }
     .cs-filter-panel {
       display: grid;
@@ -882,6 +884,210 @@
       background: var(--plain-soft);
       border-bottom: 1px solid var(--rule-2);
     }
+    .cs-searchwrap.is-statistics { flex: 0 0 auto; min-width: 0; }
+    .cs-searchwrap.is-statistics .cs-scope-btn {
+      border-right: 1px solid var(--rule);
+      border-radius: 2px;
+    }
+    .cs-statistics {
+      width: min(1500px, 100%);
+      margin: 0 auto;
+      padding: 0.85rem 0.85rem 2.8rem;
+    }
+    .cs-stat-header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 0.8rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--rule);
+    }
+    .cs-stat-header h2 {
+      margin: 0;
+      font-family: var(--font-serif);
+      font-size: 1.2rem;
+    }
+    .cs-stat-header p,
+    .cs-stat-card header p {
+      margin: 0.2rem 0 0;
+      color: var(--ink-3);
+      font-family: var(--font-mono);
+      font-size: 0.64rem;
+      line-height: 1.4;
+    }
+    .cs-stat-filters {
+      display: flex;
+      align-items: end;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+    }
+    .cs-stat-filters label {
+      display: grid;
+      gap: 0.2rem;
+      color: var(--ink-3);
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+    }
+    .cs-stat-filters select {
+      min-width: 9rem;
+      height: 28px;
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      padding: 0.2rem 0.35rem;
+    }
+    .cs-stat-metrics {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      margin: 0.75rem 0;
+      border-top: 1px solid var(--rule);
+      border-left: 1px solid var(--rule);
+    }
+    .cs-stat-metric {
+      min-width: 0;
+      padding: 0.65rem;
+      border-right: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule);
+      background: var(--plain-soft);
+    }
+    .cs-stat-metric span,
+    .cs-stat-metric small {
+      display: block;
+      color: var(--ink-3);
+      font-family: var(--font-mono);
+      font-size: 0.6rem;
+      line-height: 1.35;
+    }
+    .cs-stat-metric strong {
+      display: block;
+      margin: 0.12rem 0;
+      color: var(--ink);
+      font-family: var(--font-serif);
+      font-size: 1.35rem;
+      line-height: 1.1;
+    }
+    .cs-stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75rem;
+      align-items: start;
+    }
+    .cs-stat-card {
+      min-width: 0;
+      border: 1px solid var(--rule);
+      background: var(--paper);
+    }
+    .cs-stat-card-wide { grid-column: 1 / -1; }
+    .cs-stat-card > header {
+      padding: 0.6rem 0.7rem;
+      border-bottom: 1px solid var(--rule-2);
+      background: var(--plain-soft);
+    }
+    .cs-stat-card h3 {
+      margin: 0;
+      font-family: var(--font-serif);
+      font-size: 0.88rem;
+    }
+    .cs-stat-ranking,
+    .cs-stat-coverage,
+    .cs-stat-trend {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .cs-stat-ranking { padding: 0.35rem 0.7rem 0.55rem; }
+    .cs-stat-ranking-split {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 1.2rem;
+    }
+    .cs-stat-ranking li { padding: 0.35rem 0; }
+    .cs-stat-rank-head,
+    .cs-stat-coverage-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+    }
+    .cs-stat-rank-head strong,
+    .cs-stat-coverage-head strong { color: var(--ink); }
+    .cs-stat-track {
+      height: 7px;
+      margin: 0.16rem 0;
+      background: var(--rule-2);
+      border-left: 1px solid var(--ink-3);
+    }
+    .cs-stat-track > span {
+      display: block;
+      height: 100%;
+      background: var(--link);
+    }
+    .cs-stat-ranking small,
+    .cs-stat-coverage small {
+      color: var(--ink-3);
+      font-family: var(--font-mono);
+      font-size: 0.58rem;
+    }
+    .cs-stat-trend {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(48px, 1fr);
+      gap: 0.3rem;
+      min-height: 235px;
+      padding: 0.7rem;
+      overflow-x: auto;
+    }
+    .cs-stat-trend li {
+      display: grid;
+      grid-template-rows: 1.2rem 170px 1rem;
+      gap: 0.18rem;
+      min-width: 0;
+      text-align: center;
+      color: var(--ink-3);
+      font-family: var(--font-mono);
+      font-size: 0.58rem;
+    }
+    .cs-stat-trend-value { align-self: end; white-space: nowrap; }
+    .cs-stat-trend-bar {
+      position: relative;
+      display: block;
+      border-bottom: 1px solid var(--ink-3);
+      background: var(--plain-soft);
+    }
+    .cs-stat-trend-bar i {
+      position: absolute;
+      right: 16%;
+      bottom: 0;
+      left: 16%;
+      min-height: 1px;
+      background: var(--link);
+      border: 1px solid color-mix(in srgb, var(--link) 75%, var(--ink));
+      border-bottom: 0;
+    }
+    .cs-stat-coverage {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.25rem 1.2rem;
+      padding: 0.55rem 0.7rem 0.7rem;
+    }
+    .cs-stat-coverage li { padding: 0.2rem 0; }
+    .cs-stat-method {
+      display: grid;
+      gap: 0.18rem;
+      margin-top: 0.75rem;
+      padding: 0.65rem 0.7rem;
+      border: 1px solid var(--rule);
+      background: var(--plain-soft);
+      color: var(--ink-3);
+      font-family: var(--font-mono);
+      font-size: 0.61rem;
+      line-height: 1.4;
+    }
+    .cs-stat-method strong { color: var(--ink); }
     .cs-empty {
       padding: 1rem;
       text-align: center;
@@ -922,6 +1128,7 @@
         grid-template-columns: 16px minmax(7.8rem, 0.3fr) minmax(0, 1fr);
       }
       .cs-dossier-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .cs-stat-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
     @media (max-width: 720px) {
       .cs-panel { height: auto; min-height: 100vh; overflow: visible; }
@@ -953,12 +1160,21 @@
       .cs-case-fields { justify-content: flex-start; }
       .cs-dossier-ledger { grid-template-columns: 1fr; }
       .cs-kv-grid { grid-template-columns: 1fr; }
+      .cs-statistics { padding: 0.55rem 0.55rem 2.8rem; }
+      .cs-stat-header { align-items: stretch; flex-direction: column; }
+      .cs-stat-filters label { flex: 1 1 9rem; }
+      .cs-stat-filters select { width: 100%; }
+      .cs-stat-grid { grid-template-columns: 1fr; }
+      .cs-stat-card-wide { grid-column: auto; }
+      .cs-stat-coverage { grid-template-columns: 1fr; }
+      .cs-stat-ranking-split { grid-template-columns: 1fr; }
       .cs-record-table:not(.cs-document-table) th:nth-child(n+4),
       .cs-record-table:not(.cs-document-table) td:nth-child(n+4) { display: none; }
     }
     @media (max-width: 520px) {
       .cs-load-progress { min-height: 154px; padding: 12px; }
       .cs-load-progress-stats { grid-template-columns: 1fr; }
+      .cs-stat-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aimesy/themes@cd6aac6380c70291fa876f8d1d802cde65b80b0a/src/theme.css">
@@ -1015,12 +1231,14 @@
               <label><input type="radio" name="cs-scope" value="cases" checked> Cases</label>
               <label><input type="radio" name="cs-scope" value="parties"> Parties</label>
               <label><input type="radio" name="cs-scope" value="counsel"> Counsel</label>
+              <label><input type="radio" name="cs-scope" value="statistics"> Statistics</label>
             </div>
           </div>
           <input type="search" class="cs-search" id="cs-search" placeholder="Search title, cause, status, node, case number, or namespaces" autocomplete="off">
         </div>
         <button type="button" class="hbtn" id="cs-filter-btn" title="Advanced KCSC filters">Advanced</button>
         <button type="button" class="hbtn" id="cs-reset-btn" title="Clear search and filters">Reset</button>
+        <button type="button" class="hbtn" id="cs-statistics-btn" title="Open archive statistics">Statistics</button>
         <a class="hbtn cs-data-source" href="https://github.com/aimesy/kcsc-data" target="_blank" rel="noopener noreferrer">Data</a>
       </div>
       <div class="cs-filter-panel" id="cs-filter-panel" hidden>
@@ -1049,6 +1267,10 @@
               <option value="hearing">Has hearings</option>
               <option value="party">Has parties</option>
               <option value="counsel">Has counsel</option>
+              <option value="representation" data-feature="representation">Has representation links</option>
+              <option value="charge" data-feature="charges">Has charges</option>
+              <option value="judgment" data-feature="judgments">Has judgments</option>
+              <option value="payment" data-feature="payments">Has payments</option>
               <option value="document">Has document index rows</option>
             </select>
           </div>
@@ -1060,7 +1282,7 @@
       <div class="cs-hint">Loading archived dockets...</div>
     </div>
   </div>
-  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260821-directory-1"></script>
+  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260827-statistics-1"></script>
   <footer aria-label="Terms" style="position:fixed;right:.75rem;bottom:.5rem;z-index:var(--amyc-public-records-footer-z, 80);font:11px/1.2 system-ui,sans-serif;opacity:.58"><a href="./terms.html" style="color:inherit;text-decoration:none">T&amp;Cs</a></footer>
 </body>
 </html>

@@ -16,6 +16,9 @@ import {
 const manifest = {
   format: 'kcsc-case-directory-v1',
   case_count: 3,
+  source_index_format: 'ndjson-prefix-shards-v1',
+  source_index_parts: 3,
+  source_index_rows: 3,
   case_types: [
     {
       case_type: 'civil',
@@ -25,7 +28,7 @@ const manifest = {
           location_code: 'SEA',
           rows: 2,
           years: [
-            { year: '2026', rows: 1, sources: [{ path: 'archive/cases-index/262.ndjson', rows: 2, size_bytes: 42 }] },
+            { year: '2026', rows: 1, sources: [{ path: 'archive/cases-index/262.ndjson', rows: 1, size_bytes: 42 }] },
             { year: '2025', rows: 1, sources: [{ path: 'archive/cases-index/252.ndjson', rows: 1, size_bytes: 21 }] },
           ],
         },
@@ -50,6 +53,7 @@ const manifest = {
 assert.equal(validateDirectoryManifest(structuredClone(manifest), 3).case_count, 3);
 assert.throws(() => validateDirectoryManifest({ ...manifest, case_count: 4 }, 4), /group count/);
 assert.throws(() => validateDirectoryManifest({ ...manifest, format: 'legacy' }), /unsupported/);
+assert.throws(() => validateDirectoryManifest({ ...manifest, source_index_rows: 4 }), /row count/);
 assert.equal(safeDirectoryPath('../escape.ndjson'), '');
 assert.equal(safeDirectoryPath('https://foreign.example/x'), '');
 assert.equal(filingYear('2026-08-21'), '2026');

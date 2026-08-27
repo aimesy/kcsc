@@ -1,8 +1,13 @@
 import {
   createLoadProgress,
-  fetchJsonWithProgress,
   formatLoadBytes,
 } from './load-progress.js';
+import {
+  canonicalFeatureCounts,
+  createKcscDataClient,
+  featureAvailableInIndex,
+  representationRows,
+} from './kcsc-data-client.js';
 import {
   createDirectoryClient,
   directoryGroups,
@@ -12,6 +17,10 @@ import {
   uniqueDirectorySources,
   validateDirectoryManifest,
 } from './kcsc-directory.js';
+import {
+  statisticsCoveragePercent,
+  statisticsSegment,
+} from './kcsc-statistics.js';
 
 const DUCKDB_ESM_URL = 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev45.0/+esm';
 const REMOTE_DATA_BASE = 'https://raw.githubusercontent.com/aimesy/kcsc-data/master/';
@@ -22,6 +31,10 @@ const REQUEST_TIMEOUT_MS = 20000;
 
 const $ = (id) => document.getElementById(id);
 const nf = new Intl.NumberFormat('en-US');
+const compactNf = new Intl.NumberFormat('en-US', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
 const GENERIC_COUNSEL_NAMES = new Set([
   'attorney',
   'counsel',
@@ -37,6 +50,7 @@ const GENERIC_COUNSEL_NAMES = new Set([
 const state = {
   manifest: null,
   dataBase: '',
+  dataClient: null,
   duckdb: null,
   db: null,
   conn: null,
@@ -68,6 +82,7 @@ const state = {
   caseGroupRows: new Map(),
   entityCaseFilter: null,
   scope: 'cases',
+  statisticsFilters: { caseType: '', location: '' },
   searchSeq: 0,
   searchTimer: null,
   caseOpenSeq: 0,
@@ -97,12 +112,6 @@ function escapeHtml(value) {
   })[c]);
 }
 
-function normalizeBase(base) {
-  const raw = text(base);
-  if (!raw) return '';
-  return raw.endsWith('/') ? raw : `${raw}/`;
-}
-
 function safeHttpHref(value) {
   try {
     const raw = text(value);
@@ -116,20 +125,6 @@ function safeHttpHref(value) {
 
 function normalizeCaseKey(value) {
   return text(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
-}
-
-async function fetchWithTimeout(url, init = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function dataUrl(path) {
-  return new URL(path.replace(/^\/+/, ''), new URL(state.dataBase, location.href)).href;
 }
 
 function runningOnPublishedSite() {
@@ -269,32 +264,24 @@ function showBodyError(message, retry = '') {
   $('cs-body').innerHTML = `<div class="cs-error">${escapeHtml(message)}${retry ? ` <button type="button" class="hbtn" data-retry-action="${escapeHtml(retry)}">Retry</button>` : ''}</div>`;
 }
 
-async function fetchJsonFrom(base, path) {
-  const url = new URL(path, new URL(base, location.href)).href;
-  const res = await fetchWithTimeout(url, { cache: 'no-cache' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return { json: await res.json(), url };
-}
-
-async function fetchTextFrom(base, path) {
-  const url = new URL(path, new URL(base, location.href)).href;
-  const res = await fetchWithTimeout(url, { cache: 'no-cache' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return { text: await res.text(), url };
-}
-
 async function resolveDataBase() {
   const params = new URLSearchParams(location.search);
-  const requested = normalizeBase(params.get('dataBase'));
+  const requested = text(params.get('dataBase'));
   const defaults = runningOnPublishedSite() ? [REMOTE_DATA_BASE, './'] : ['./', REMOTE_DATA_BASE];
   const candidates = [requested, ...defaults].filter(Boolean);
   const errors = [];
 
   for (const base of candidates) {
     try {
-      const got = await fetchJsonFrom(base, 'data/manifest.json');
-      state.dataBase = normalizeBase(base);
-      state.manifest = got.json;
+      const client = createKcscDataClient({
+        base,
+        locationHref: location.href,
+        timeoutMs: REQUEST_TIMEOUT_MS,
+      });
+      const got = await client.manifest();
+      state.dataBase = client.base;
+      state.dataClient = client;
+      state.manifest = got.data;
       return;
     } catch (err) {
       errors.push(`${base}: ${err.message || err}`);
@@ -322,34 +309,14 @@ async function ensureDuckDB() {
 }
 
 async function fetchBuffer(path, progress = null) {
-  const res = await fetchWithTimeout(dataUrl(path), { cache: 'no-cache' }, 60000);
-  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${path}`);
-  const rawLength = res.headers.get('Content-Length');
-  const total = /^\d+$/.test(text(rawLength)) ? Number(rawLength) : null;
-  let loaded = 0;
-  const chunks = [];
-  if (res.body?.getReader) {
-    const reader = res.body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      loaded += value.byteLength;
+  const result = await state.dataClient.buffer(path, {
+    init: { cache: 'no-cache' },
+    timeoutMs: 60000,
+    onProgress: ({ loaded, total }) => {
       progress?.update({ bytesLoaded: loaded, bytesTotal: total });
-    }
-  } else {
-    const value = new Uint8Array(await res.arrayBuffer());
-    chunks.push(value);
-    loaded = value.byteLength;
-    progress?.update({ bytesLoaded: loaded, bytesTotal: total });
-  }
-  const out = new Uint8Array(loaded);
-  let offset = 0;
-  chunks.forEach((chunk) => {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
+    },
   });
-  return out;
+  return result.bytes;
 }
 
 async function registerParquet(tableName, path, progress = null) {
@@ -400,7 +367,7 @@ async function loadCaseIndexRows() {
       const batch = configuredParts.slice(offset, offset + batchSize);
       const responses = await Promise.all(batch.map((part) => {
         const path = typeof part === 'string' ? part : part.path;
-        return fetchTextFrom(state.dataBase, path);
+        return state.dataClient.text(path, { cache: 'no-cache' });
       }));
       for (const got of responses) {
         rows.push(...got.text
@@ -413,7 +380,7 @@ async function loadCaseIndexRows() {
   }
 
   const legacyPath = state.manifest?.archive?.cases_index || 'archive/cases-index.ndjson';
-  const got = await fetchTextFrom(state.dataBase, legacyPath);
+  const got = await state.dataClient.text(legacyPath, { cache: 'no-cache' });
   return got.text
     .split(/\r?\n/)
     .filter((line) => line.trim())
@@ -432,8 +399,7 @@ async function loadCaseDirectoryManifest() {
     ariaLabel: 'KCSC case directory loaded',
   });
   try {
-    const result = await fetchJsonWithProgress(dataUrl(path), { cache: 'no-cache' }, {
-      fetchImpl: (input, init) => fetchWithTimeout(input, init),
+    const result = await state.dataClient.json(path, { cache: 'no-cache' }, {
       onProgress: ({ loaded, total }) => progress.update({ bytesLoaded: loaded, bytesTotal: total }),
       onPhase: () => progress.update({ phase: 'Validating case directory' }),
     });
@@ -448,7 +414,10 @@ async function loadCaseDirectoryManifest() {
     state.directoryClient = createDirectoryClient({
       base: state.dataBase,
       locationHref: location.href,
-      fetchImpl: (input, init) => fetchWithTimeout(input, init, 60000),
+      fetchImpl: (input, init) => state.dataClient.fetch(input, {
+        ...init,
+        kcscTimeoutMs: 60000,
+      }),
     });
     progress.update({
       phase: 'Case directory ready',
@@ -662,7 +631,9 @@ function sortEntities(a, b) {
 }
 
 async function loadData() {
+  state.scope = requestedScopeFromLocation();
   bindEvents();
+  applyScopeUi(state.scope);
   setStatus('loading data', 'reading manifest');
   await resolveDataBase();
   state.calendarRows = [];
@@ -685,8 +656,13 @@ async function loadData() {
     await openCase(initialCase, { push: false });
   } else {
     renderResults();
+    setStatus('loaded', archiveReadyText());
   }
-  setStatus('loaded', initialCase ? '' : archiveReadyText());
+}
+
+function requestedScopeFromLocation() {
+  const requested = text(new URLSearchParams(location.search).get('scope')).toLowerCase();
+  return ['cases', 'parties', 'counsel', 'statistics'].includes(requested) ? requested : 'cases';
 }
 
 async function ensureEntityData(kind) {
@@ -779,6 +755,9 @@ function populateFilters() {
   $('location-filter').innerHTML = optionList(values.locations || state.cases.map((r) => r.location_code), 'All locations');
   $('status-filter').innerHTML = optionList(values.status_groups || state.cases.map((r) => statusGroup(r.status)), 'All statuses');
   $('node-filter').innerHTML = optionList(values.portal_nodes || state.cases.map((r) => r.portal_node_id), 'All nodes');
+  $('content-filter').querySelectorAll('option[data-feature]').forEach((option) => {
+    if (!featureAvailableInIndex(state.manifest, option.dataset.feature)) option.remove();
+  });
 }
 
 function scopeLabel(scope = state.scope) {
@@ -786,6 +765,7 @@ function scopeLabel(scope = state.scope) {
     cases: 'Cases',
     parties: 'Parties',
     counsel: 'Counsel',
+    statistics: 'Statistics',
   }[scope] || 'Cases';
 }
 
@@ -794,6 +774,7 @@ function scopePlaceholder(scope = state.scope) {
     cases: 'Search title, cause, status, node, case number, or namespaces',
     parties: 'Search party names, roles, counsel, address, or case number',
     counsel: 'Search counsel names, bar numbers, represented parties, or case number',
+    statistics: '',
   }[scope] || 'Search title, cause, status, node, case number, or namespaces';
 }
 
@@ -801,7 +782,14 @@ function applyScopeUi(scope = state.scope) {
   $('cs-scope-label').textContent = scopeLabel(scope);
   $('cs-search').placeholder = scopePlaceholder(scope);
   const caseScope = scope === 'cases';
+  const statisticsScope = scope === 'statistics';
+  $('cs-search').hidden = statisticsScope;
+  $('cs-search').closest('.cs-searchwrap')?.classList.toggle('is-statistics', statisticsScope);
   $('cs-filter-btn').hidden = !caseScope;
+  $('cs-reset-btn').hidden = statisticsScope;
+  $('cs-statistics-btn').classList.toggle('active', statisticsScope);
+  if (statisticsScope) $('cs-statistics-btn').setAttribute('aria-current', 'page');
+  else $('cs-statistics-btn').removeAttribute('aria-current');
   if (!caseScope) {
     $('cs-filter-panel').hidden = true;
     $('cs-filter-btn').classList.remove('active');
@@ -826,6 +814,13 @@ function scheduleResults(delay = 260) {
   state.searchTimer = setTimeout(() => renderResults(), delay);
 }
 
+function replaceScopeInLocation(scope) {
+  const url = new URL(location.href);
+  if (scope === 'statistics') url.searchParams.set('scope', 'statistics');
+  else url.searchParams.delete('scope');
+  history.replaceState(null, '', url);
+}
+
 function bindEvents() {
   if (state.bound) return;
   state.bound = true;
@@ -848,12 +843,30 @@ function bindEvents() {
     renderResults();
   });
 
+  $('cs-statistics-btn').addEventListener('click', () => {
+    state.scope = 'statistics';
+    clearEntityCaseFilter();
+    replaceScopeInLocation(state.scope);
+    applyScopeUi(state.scope);
+    renderResults();
+  });
+
   $('cs-search').addEventListener('input', () => {
     clearEntityCaseFilter();
     scheduleResults();
   });
   ['type-filter', 'location-filter', 'status-filter', 'from-date', 'to-date', 'sort-filter', 'node-filter', 'content-filter']
     .forEach((id) => $(id).addEventListener('change', () => scheduleResults(0)));
+
+  $('cs-body').addEventListener('change', (event) => {
+    if (event.target?.id === 'cs-stat-type') {
+      state.statisticsFilters.caseType = event.target.value;
+      renderStatistics();
+    } else if (event.target?.id === 'cs-stat-location') {
+      state.statisticsFilters.location = event.target.value;
+      renderStatistics();
+    }
+  });
 
   $('cs-scope-btn').addEventListener('click', () => {
     const menu = $('cs-scope-menu');
@@ -865,6 +878,7 @@ function bindEvents() {
     radio.addEventListener('change', async () => {
       state.scope = radio.value;
       clearEntityCaseFilter();
+      replaceScopeInLocation(state.scope);
       applyScopeUi(state.scope);
       $('cs-scope-menu').classList.remove('open');
       $('cs-scope-btn').setAttribute('aria-expanded', 'false');
@@ -898,6 +912,7 @@ function bindEvents() {
         caseNumbers: new Set(entity.caseNumbers.map(normalizeCaseKey).filter(Boolean)),
       } : null;
       state.scope = 'cases';
+      replaceScopeInLocation(state.scope);
       applyScopeUi(state.scope);
       $('cs-search').value = entityLink.getAttribute('data-entity-search') || '';
       renderResults();
@@ -1101,7 +1116,11 @@ function caseMatchesFilters(row, filters, includeFreeText = true) {
   if (filters.content === 'hearing' && !num(row.calendar_count)) return false;
   if (filters.content === 'party' && !num(row.party_count)) return false;
   if (filters.content === 'counsel' && !num(row.attorney_count)) return false;
-  if (filters.content === 'document' && !row.has_document_index_rows) return false;
+  if (filters.content === 'representation' && !num(row.representation_count)) return false;
+  if (filters.content === 'payment' && !num(row.payment_count)) return false;
+  if (filters.content === 'charge' && !num(row.charge_count)) return false;
+  if (filters.content === 'judgment' && !num(row.judgment_count)) return false;
+  if (filters.content === 'document' && !caseHasDocumentIndexRows(row)) return false;
   return true;
 }
 
@@ -1459,6 +1478,182 @@ async function runCaseSearch(filters, searchSeq) {
   }
 }
 
+function statisticsOptionList(values, selected, allLabel) {
+  return [
+    `<option value="">${escapeHtml(allLabel)}</option>`,
+    ...values.map((value) => `<option value="${escapeHtml(value)}"${value === selected ? ' selected' : ''}>${escapeHtml(value.toUpperCase())}</option>`),
+  ].join('');
+}
+
+function statisticsTimestamp(value) {
+  const date = new Date(text(value));
+  if (Number.isNaN(date.getTime())) return text(value) || 'unknown';
+  return `${date.toLocaleDateString('en-US', { timeZone: 'UTC' })} ${date.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'UTC',
+    timeZoneName: 'short',
+  })}`;
+}
+
+function statisticsFeatureLabel(name) {
+  return {
+    docket: 'Docket entries',
+    hearings: 'Hearings',
+    parties: 'Party rows',
+    counsel: 'Counsel rows',
+    representation: 'Representation links',
+    payments: 'Payments',
+    charges: 'Charge rows',
+    judgments: 'Judgment rows',
+    documents: 'Document index rows',
+  }[name] || name.replace(/_/g, ' ');
+}
+
+function statisticsMetric(label, value, note) {
+  return `<article class="cs-stat-metric">
+    <span>${escapeHtml(label)}</span>
+    <strong title="${escapeHtml(nf.format(value))}">${escapeHtml(compactNf.format(value))}</strong>
+    <small>${escapeHtml(note)}</small>
+  </article>`;
+}
+
+function statisticsRanking(title, subtitle, rows, cases, options = {}) {
+  const maximum = Math.max(1, ...rows.map((row) => num(row.cases)));
+  const bars = rows.map((row) => {
+    const width = (num(row.cases) / maximum) * 100;
+    const share = statisticsCoveragePercent(num(row.cases), cases);
+    return `<li aria-label="${escapeHtml(row.value)}: ${escapeHtml(nf.format(row.cases))} cases, ${share.toFixed(1)} percent">
+      <div class="cs-stat-rank-head"><span>${escapeHtml(row.value)}</span><strong>${escapeHtml(nf.format(row.cases))}</strong></div>
+      <div class="cs-stat-track"><span style="width:${width.toFixed(3)}%"></span></div>
+      <small>${share.toFixed(1)}% of filtered cases</small>
+    </li>`;
+  }).join('');
+  return `<section class="cs-stat-card${options.wide ? ' cs-stat-card-wide' : ''}">
+    <header><h3>${escapeHtml(title)}</h3><p>${escapeHtml(subtitle)}</p></header>
+    <ol class="cs-stat-ranking${options.split ? ' cs-stat-ranking-split' : ''}">${bars || '<li class="cs-empty">No values.</li>'}</ol>
+  </section>`;
+}
+
+function completeStatisticsYears(rows, domainRows) {
+  const values = new Map(rows.map((row) => [text(row.value), num(row.cases)]));
+  const numericYears = domainRows
+    .map((row) => text(row.value))
+    .filter((value) => /^\d{4}$/.test(value))
+    .map(Number);
+  if (!numericYears.length) return rows;
+  const minimum = Math.min(...numericYears);
+  const maximum = Math.max(...numericYears);
+  const completed = Array.from({ length: maximum - minimum + 1 }, (_value, index) => {
+    const year = String(minimum + index);
+    return { value: year, cases: values.get(year) || 0 };
+  });
+  if (domainRows.some((row) => text(row.value) === 'unknown')) {
+    completed.push({ value: 'unknown', cases: values.get('unknown') || 0 });
+  }
+  return completed;
+}
+
+function statisticsTrend(rows, cases, domainRows = rows) {
+  const completedRows = completeStatisticsYears(rows, domainRows);
+  const maximum = Math.max(1, ...completedRows.map((row) => num(row.cases)));
+  const bars = completedRows.map((row) => {
+    const height = (num(row.cases) / maximum) * 100;
+    const label = row.value === 'unknown' ? '?' : row.value;
+    return `<li aria-label="${escapeHtml(row.value)}: ${escapeHtml(nf.format(row.cases))} cases">
+      <span class="cs-stat-trend-value">${escapeHtml(compactNf.format(row.cases))}</span>
+      <span class="cs-stat-trend-bar"><i style="height:${height.toFixed(3)}%"></i></span>
+      <span class="cs-stat-trend-year">${escapeHtml(label)}</span>
+    </li>`;
+  }).join('');
+  return `<section class="cs-stat-card cs-stat-card-wide">
+    <header><h3>Cases filed by year</h3><p>${nf.format(cases)} filtered cases; bars start at zero and years without archived filings remain visible at zero.</p></header>
+    <ol class="cs-stat-trend">${bars || '<li class="cs-empty">No filing years.</li>'}</ol>
+  </section>`;
+}
+
+function statisticsFeatureCoverage(features, cases) {
+  const preferred = ['docket', 'hearings', 'parties', 'counsel', 'representation', 'charges', 'judgments', 'documents', 'payments'];
+  const ordered = preferred.filter((name) => features[name]);
+  const rows = ordered.map((name) => {
+    const feature = features[name];
+    const share = statisticsCoveragePercent(feature.cases, cases);
+    return `<li aria-label="${escapeHtml(statisticsFeatureLabel(name))}: ${nf.format(feature.cases)} cases, ${nf.format(feature.rows)} rows">
+      <div class="cs-stat-coverage-head"><span>${escapeHtml(statisticsFeatureLabel(name))}</span><strong>${share.toFixed(1)}%</strong></div>
+      <div class="cs-stat-track"><span style="width:${share.toFixed(3)}%"></span></div>
+      <small>${nf.format(feature.cases)} cases · ${nf.format(feature.rows)} rows</small>
+    </li>`;
+  }).join('');
+  return `<section class="cs-stat-card cs-stat-card-wide">
+    <header><h3>Feature coverage</h3><p>Share of filtered cases with at least one row; exact case and row counts shown below each bar.</p></header>
+    <ol class="cs-stat-coverage">${rows}</ol>
+  </section>`;
+}
+
+function renderStatistics() {
+  const statistics = state.manifest?.statistics;
+  $('cs-kicker').textContent = 'Statistics';
+  $('cs-entity-title').textContent = 'KCSC archive statistics';
+  $('cs-tabstrip').hidden = true;
+  if (!statistics) {
+    $('cs-entity-meta').textContent = 'statistics unavailable in this data release';
+    showBodyError('This KCSC data release does not include the versioned statistics contract.');
+    return;
+  }
+
+  const segment = statisticsSegment(statistics, state.statisticsFilters);
+  if (!segment) {
+    showBodyError('The selected statistics segment is unavailable.');
+    return;
+  }
+  const asOf = statisticsTimestamp(statistics.generated_at);
+  const context = [
+    state.statisticsFilters.caseType ? state.statisticsFilters.caseType.toUpperCase() : 'all case types',
+    state.statisticsFilters.location || 'all locations',
+  ].join(' · ');
+  $('cs-entity-meta').textContent = `${nf.format(segment.cases)} cases · ${context} · ${asOf}`;
+  setStatus('loaded', `${nf.format(segment.cases)} cases in statistics segment`);
+
+  const metrics = [
+    statisticsMetric('Cases', segment.cases, 'distinct canonical records'),
+    statisticsMetric('Docket entries', segment.features.docket.rows, `${nf.format(segment.features.docket.cases)} cases covered`),
+    statisticsMetric('Hearings', segment.features.hearings.rows, `${nf.format(segment.features.hearings.cases)} cases covered`),
+    statisticsMetric('Party rows', segment.features.parties.rows, `${nf.format(segment.features.parties.cases)} cases covered`),
+    statisticsMetric('Document index rows', segment.features.documents.rows, `${nf.format(segment.features.documents.cases)} cases indexed`),
+    statisticsMetric('Judgments', segment.features.judgments.rows, `${nf.format(segment.features.judgments.cases)} cases covered`),
+  ].join('');
+  const definitions = statistics.definitions || {};
+  const overallSegment = statisticsSegment(statistics, {});
+  $('cs-body').innerHTML = `<main class="cs-statistics">
+    <header class="cs-stat-header">
+      <div>
+        <h2>Archive statistics</h2>
+        <p>Published KCSC corpus at the one-case grain. Filters apply to every metric and chart.</p>
+      </div>
+      <div class="cs-stat-filters" aria-label="Statistics filters">
+        <label>Case type<select id="cs-stat-type">${statisticsOptionList(statistics.filters.case_types, state.statisticsFilters.caseType, 'All types')}</select></label>
+        <label>Location<select id="cs-stat-location">${statisticsOptionList(statistics.filters.locations, state.statisticsFilters.location, 'All locations')}</select></label>
+      </div>
+    </header>
+    <section class="cs-stat-metrics" aria-label="Headline archive metrics">${metrics}</section>
+    <div class="cs-stat-grid">
+      ${statisticsTrend(segment.breakdowns.filing_year, segment.cases, overallSegment.breakdowns.filing_year)}
+      ${statisticsRanking('Case type mix', 'Cases by canonical case type.', segment.breakdowns.case_type, segment.cases)}
+      ${statisticsRanking('Location mix', 'Cases by SEA or KNT suffix.', segment.breakdowns.location, segment.cases)}
+      ${statisticsRanking('Status', 'Cases by normalized status group.', segment.breakdowns.status_group, segment.cases, { wide: true, split: true })}
+      ${statisticsRanking('Portal node', 'Cases by preserved KCSC portal node.', segment.breakdowns.portal_node, segment.cases, { wide: true })}
+      ${statisticsFeatureCoverage(segment.features, segment.cases)}
+    </div>
+    <footer class="cs-stat-method">
+      <strong>Source and definitions</strong>
+      <span>Generated ${escapeHtml(asOf)} from ${escapeHtml(statistics.source)}.</span>
+      <span>Cases: ${escapeHtml(definitions.cases || 'Distinct canonical case records.')}</span>
+      <span>Coverage: ${escapeHtml(definitions.feature_cases || 'Cases with at least one named feature row.')}</span>
+      <span>Rows: ${escapeHtml(definitions.feature_rows || 'A case may contribute multiple rows.')}</span>
+    </footer>
+  </main>`;
+}
+
 function renderResults() {
   if (!state.directory && !state.cases.length) return;
   clearTimeout(state.searchTimer);
@@ -1467,6 +1662,10 @@ function renderResults() {
   state.selectedCase = null;
   $('cs-tabstrip').hidden = true;
   applyScopeUi(state.scope);
+  if (state.scope === 'statistics') {
+    renderStatistics();
+    return;
+  }
   if (state.scope === 'parties' || state.scope === 'counsel') {
     renderEntityResults(state.scope);
     return;
@@ -1631,8 +1830,14 @@ function renderCaseGroups(rows) {
 }
 
 function rowStateClass(row) {
-  const hasActions = num(row.docket_entry_count) || num(row.calendar_count);
-  const hasPeople = num(row.party_count) || num(row.attorney_count);
+  const hasActions = num(row.docket_entry_count)
+    || num(row.calendar_count)
+    || num(row.charge_count)
+    || num(row.judgment_count)
+    || num(row.payment_count);
+  const hasPeople = num(row.party_count)
+    || num(row.attorney_count)
+    || num(row.representation_count);
   if (hasActions && hasPeople) return 'cs-case-state-check';
   if (hasActions) return 'cs-case-state-ring';
   if (hasPeople) return 'cs-case-state-partial';
@@ -1657,6 +1862,11 @@ function renderCaseMetaFields(row) {
     caseField('ROA', num(row.docket_entry_count) ? nf.format(num(row.docket_entry_count)) : ''),
     caseField('Party', num(row.party_count) ? nf.format(num(row.party_count)) : ''),
     caseField('Atty', num(row.attorney_count) ? nf.format(num(row.attorney_count)) : ''),
+    caseField('Rel', num(row.representation_count) ? nf.format(num(row.representation_count)) : ''),
+    caseField('Charge', num(row.charge_count) ? nf.format(num(row.charge_count)) : ''),
+    caseField('Judgment', num(row.judgment_count) ? nf.format(num(row.judgment_count)) : ''),
+    caseField('Payment', num(row.payment_count) ? nf.format(num(row.payment_count)) : ''),
+    caseField('Docs', num(row.document_index_count) ? nf.format(num(row.document_index_count)) : ''),
     caseField('Next', hearing ? compactDateTime(hearing.court_date, hearing.hearing_time) : ''),
   ].filter(Boolean).join('');
 }
@@ -1693,15 +1903,13 @@ async function loadCase(caseNumber, progress = null) {
   const canonical = normalizeCaseKey(row?.case_number || caseNumber);
   if (!canonical) throw new Error('Invalid case number');
   if (state.detailCache.has(canonical)) return await state.detailCache.get(canonical);
-  const path = `archive/cases/${encodeURIComponent(canonical)}.json`;
   const promise = (async () => {
-    const result = await fetchJsonWithProgress(dataUrl(path), { cache: 'no-cache' }, {
-      fetchImpl: (input, init) => fetchWithTimeout(input, init),
+    const result = await state.dataClient.caseRecord(canonical, {
       onProgress: ({ loaded, total }) => progress?.update({ bytesLoaded: loaded, bytesTotal: total }),
       onPhase: () => progress?.update({ phase: 'Opening case profile' }),
     });
     if (!result.data || typeof result.data !== 'object' || Array.isArray(result.data)) {
-      throw new Error(`Invalid case profile at ${path}`);
+      throw new Error(`Invalid case profile for ${canonical}`);
     }
     progress?.update({
       phase: 'Case profile ready',
@@ -1761,17 +1969,19 @@ async function openCase(caseNumber, options = {}) {
 }
 
 function tabsForCase(record) {
-  const kcsc = record.kcsc || {};
+  const counts = canonicalFeatureCounts(record);
   const tabs = [
     ['summary', 'Summary'],
-    ['docket', `Docket ${record.docket_entries?.length || 0}`],
-    ['hearings', `Hearings ${record.calendar?.length || 0}`],
-    ['parties', `Parties ${record.parties?.length || 0}`],
-    ['counsel', `Counsel ${record.attorneys?.length || 0}`],
+    ['docket', `Docket ${counts.docket}`],
+    ['hearings', `Hearings ${counts.hearings}`],
+    ['parties', `Parties ${counts.parties}`],
+    ['counsel', `Counsel ${counts.counsel}`],
   ];
-  if ((kcsc.charge_rows || []).length) tabs.push(['charges', `Charges ${kcsc.charge_rows.length}`]);
-  if ((kcsc.judgment_rows || []).length) tabs.push(['judgments', `Judgments ${kcsc.judgment_rows.length}`]);
-  if ((kcsc.document_rows_deferred || []).length) tabs.push(['documents', `Documents ${kcsc.document_rows_deferred.length}`]);
+  if (counts.representation) tabs.push(['representation', `Representation ${counts.representation}`]);
+  if (counts.payments) tabs.push(['payments', `Payments ${counts.payments}`]);
+  if (counts.charges) tabs.push(['charges', `Charges ${counts.charges}`]);
+  if (counts.judgments) tabs.push(['judgments', `Judgments ${counts.judgments}`]);
+  if (counts.documents) tabs.push(['documents', `Documents ${counts.documents}`]);
   tabs.push(['provenance', 'Provenance']);
   tabs.push(['raw', 'Raw']);
   return tabs;
@@ -1832,8 +2042,10 @@ function renderTabContent(record) {
     hearings: () => renderHearings(record.calendar || []),
     parties: () => renderParties(record.parties || []),
     counsel: () => renderCounsel(record.attorneys || []),
-    charges: () => renderSourceRows(record.kcsc?.charge_rows || [], 'No charge rows.'),
-    judgments: () => renderSourceRows(record.kcsc?.judgment_rows || [], 'No judgment rows.'),
+    representation: () => renderRepresentation(representationRows(record)),
+    payments: () => renderPayments(record.payments || []),
+    charges: () => renderStructuredSourceRows('Charges', record.kcsc?.charge_rows || [], 'No charge rows.'),
+    judgments: () => renderStructuredSourceRows('Judgments', record.kcsc?.judgment_rows || [], 'No judgment rows.'),
     documents: () => renderDocuments(record.kcsc?.document_rows_deferred || []),
     provenance: () => renderProvenance(record.kcsc?.raw_tab_summaries || [], record),
     raw: () => renderRaw(record),
@@ -1865,15 +2077,22 @@ function renderSection(title, rows) {
 
 function renderSummary(record) {
   const kcsc = record.kcsc || {};
+  const counts = canonicalFeatureCounts(record);
   const next = record.calendar?.[0] || null;
   const ledger = renderLedger([
     { label: 'Type', value: record.case_type },
     { label: 'Location', value: caseLocation(record) },
     { label: 'Status', value: record.status },
     { label: 'Filed', value: displayDate(record.filed_date || record.filing_date) },
-    { label: 'Docket', value: `${record.docket_entries?.length || 0} rows` },
-    { label: 'Parties', value: `${record.parties?.length || 0} parties` },
-    { label: 'Counsel', value: `${record.attorneys?.length || 0} attorneys` },
+    { label: 'Docket', value: `${counts.docket} rows` },
+    { label: 'Hearings', value: `${counts.hearings} rows` },
+    { label: 'Parties', value: `${counts.parties} parties` },
+    { label: 'Counsel', value: `${counts.counsel} attorneys` },
+    { label: 'Representation', value: `${counts.representation} links` },
+    { label: 'Charges', value: `${counts.charges} rows` },
+    { label: 'Judgments', value: `${counts.judgments} rows` },
+    { label: 'Documents', value: `${counts.documents} index rows` },
+    { label: 'Payments', value: `${counts.payments} rows` },
   ]);
 
   const summaryRows = [
@@ -1998,6 +2217,45 @@ function renderCounsel(rows) {
   </section>`;
 }
 
+function renderRepresentation(rows) {
+  if (!rows.length) return '<div class="cs-empty">No representation links.</div>';
+  return `<section class="cs-section">
+    <h3>Representation</h3>
+    <div class="cs-record-table-wrap">
+      <table class="cs-record-table">
+        <thead><tr><th>Party</th><th>Party seq</th><th>Counsel</th><th>Attorney ID</th><th>Source</th></tr></thead>
+        <tbody>${rows.map((row) => `<tr>
+          <td>${escapeHtml(row.party_name || '(unnamed party)')}</td>
+          <td class="cs-mono">${escapeHtml(row.party_seq || '')}</td>
+          <td>${escapeHtml(row.attorney_name || '(unnamed counsel)')}</td>
+          <td class="cs-mono">${escapeHtml(row.attorney_id || '')}</td>
+          <td class="cs-mono">${escapeHtml(row.source || '')}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+  </section>`;
+}
+
+function renderPayments(rows) {
+  if (!rows.length) return '<div class="cs-empty">No payment rows.</div>';
+  return `<section class="cs-section">
+    <h3>Payments</h3>
+    <div class="cs-record-table-wrap">
+      <table class="cs-record-table">
+        <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Receipt</th><th>Description</th><th>Source</th></tr></thead>
+        <tbody>${rows.map((row) => `<tr>
+          <td class="cs-mono">${escapeHtml(displayDate(row.date))}</td>
+          <td class="cs-mono">${escapeHtml(row.amount || '')}</td>
+          <td>${escapeHtml(row.method || '')}</td>
+          <td class="cs-mono">${escapeHtml(row.receipt_number || '')}</td>
+          <td>${escapeHtml(row.description || '')}</td>
+          <td class="cs-mono">${escapeHtml(row.source || '')}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+  </section>`;
+}
+
 function sourceRowTitle(row) {
   return text(row.chargeInformation
     || row.documentName
@@ -2022,7 +2280,7 @@ function sourceRowSub(row) {
 
 function renderSourceRows(rows, emptyText, options = {}) {
   if (!rows.length) return `<div class="cs-empty">${escapeHtml(emptyText)}</div>`;
-  const title = options.compact ? 'Raw tab summaries' : 'Source rows';
+  const title = options.title || (options.compact ? 'Raw tab summaries' : 'Source rows');
   return `<section class="cs-section">
     <h3>${escapeHtml(title)}</h3>
     <div class="cs-line-list">${rows.map((row, index) => {
@@ -2035,6 +2293,36 @@ function renderSourceRows(rows, emptyText, options = {}) {
       ${showSub ? `<div class="cs-field">${escapeHtml(sub)}</div>` : ''}
       ${href ? `<div class="cs-field"><a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(href)}</a></div>` : ''}
     </div>`;
+    }).join('')}</div>
+  </section>`;
+}
+
+function structuredSourceCells(row) {
+  const headers = Array.isArray(row.rawHeaders) ? row.rawHeaders.map(text) : [];
+  const cells = Array.isArray(row.rawCells) ? row.rawCells.map(text) : [];
+  const width = Math.max(headers.length, cells.length);
+  return Array.from({ length: width }, (_value, index) => [
+    headers[index] || `Column ${index + 1}`,
+    cells[index] || '',
+  ]);
+}
+
+function renderStructuredSourceRows(title, rows, emptyText) {
+  if (!rows.length) return `<div class="cs-empty">${escapeHtml(emptyText)}</div>`;
+  return `<section class="cs-section">
+    <h3>${escapeHtml(title)}</h3>
+    <div class="cs-line-list">${rows.map((row, index) => {
+      const cells = structuredSourceCells(row);
+      const metadata = [
+        row.section,
+        row.tabKey,
+        row.rowIndex ? `row ${row.rowIndex}` : `row ${index + 1}`,
+      ].map(text).filter(Boolean).join(' | ');
+      return `<div class="cs-row">
+        <small>${escapeHtml(metadata)}</small>
+        ${cells.length ? renderKv(cells) : `<div class="cs-field">${escapeHtml(sourceRowTitle(row))}</div>`}
+        ${row.rawLine ? `<div class="cs-field cs-mono">${escapeHtml(row.rawLine)}</div>` : ''}
+      </div>`;
     }).join('')}</div>
   </section>`;
 }

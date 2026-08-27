@@ -1,0 +1,158 @@
+export const KCSC_STATISTICS_FORMAT = 'kcsc-statistics-v1';
+
+const BREAKDOWN_FIELDS = [
+  'case_type',
+  'filing_year',
+  'location',
+  'portal_node',
+  'status_group',
+];
+
+function clean(value) {
+  return value == null ? '' : String(value).replace(/\u00a0/g, ' ').trim();
+}
+
+function count(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a nonnegative integer`);
+  }
+  return value;
+}
+
+function cleanValues(values, label) {
+  if (!Array.isArray(values)) throw new Error(`${label} must be an array`);
+  const cleaned = values.map(clean);
+  if (cleaned.some((value) => !value) || new Set(cleaned).size !== cleaned.length) {
+    throw new Error(`${label} must contain unique nonempty values`);
+  }
+  return cleaned;
+}
+
+export function statisticsSegmentId(caseType = '', location = '') {
+  const parts = [];
+  if (clean(caseType)) parts.push(`type:${clean(caseType)}`);
+  if (clean(location)) parts.push(`location:${clean(location)}`);
+  return parts.join('|') || 'all';
+}
+
+function validateBreakdown(rows, cases, label) {
+  if (!Array.isArray(rows)) throw new Error(`${label} must be an array`);
+  const values = new Set();
+  let total = 0;
+  for (const [index, row] of rows.entries()) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error(`${label}[${index}] must be an object`);
+    }
+    const value = clean(row.value);
+    if (!value || values.has(value)) throw new Error(`${label} values must be unique and nonempty`);
+    values.add(value);
+    total += count(row.cases, `${label}[${index}].cases`);
+  }
+  if (total !== cases) throw new Error(`${label} count ${total} does not reconcile to ${cases} cases`);
+}
+
+function validateFeatureCoverage(features, cases, label, featureNames) {
+  if (!features || typeof features !== 'object' || Array.isArray(features)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const names = Object.keys(features).sort();
+  if (names.join('|') !== featureNames.join('|')) {
+    throw new Error(`${label} feature set does not match the data manifest`);
+  }
+  for (const name of names) {
+    const feature = features[name];
+    if (!feature || typeof feature !== 'object' || Array.isArray(feature)) {
+      throw new Error(`${label}.${name} must be an object`);
+    }
+    const featureCases = count(feature.cases, `${label}.${name}.cases`);
+    count(feature.rows, `${label}.${name}.rows`);
+    if (featureCases > cases) throw new Error(`${label}.${name}.cases exceeds segment cases`);
+  }
+}
+
+export function validateKcscStatistics(statistics, options = {}) {
+  if (!statistics || typeof statistics !== 'object' || Array.isArray(statistics)) {
+    throw new Error('invalid KCSC statistics contract');
+  }
+  if (statistics.format !== KCSC_STATISTICS_FORMAT) {
+    throw new Error(`unsupported KCSC statistics format: ${clean(statistics.format) || 'missing'}`);
+  }
+  if (clean(statistics.grain) !== 'one canonical case') {
+    throw new Error('KCSC statistics grain must be one canonical case');
+  }
+  if (options.generatedAt != null && clean(statistics.generated_at) !== clean(options.generatedAt)) {
+    throw new Error('KCSC statistics generation does not match the data manifest');
+  }
+  const caseTypes = cleanValues(statistics.filters?.case_types, 'statistics.filters.case_types');
+  const locations = cleanValues(statistics.filters?.locations, 'statistics.filters.locations');
+  const featureNames = Object.keys(options.features || {}).sort();
+  if (!featureNames.length) throw new Error('KCSC statistics require data manifest feature descriptors');
+  if (!Array.isArray(statistics.segments)) throw new Error('statistics.segments must be an array');
+
+  const expectedIds = new Set(['all']);
+  caseTypes.forEach((caseType) => expectedIds.add(statisticsSegmentId(caseType, '')));
+  locations.forEach((location) => expectedIds.add(statisticsSegmentId('', location)));
+  caseTypes.forEach((caseType) => locations.forEach((location) => {
+    expectedIds.add(statisticsSegmentId(caseType, location));
+  }));
+
+  const byId = new Map();
+  for (const [index, segment] of statistics.segments.entries()) {
+    if (!segment || typeof segment !== 'object' || Array.isArray(segment)) {
+      throw new Error(`statistics.segments[${index}] must be an object`);
+    }
+    const id = clean(segment.id);
+    const caseType = clean(segment.case_type);
+    const location = clean(segment.location);
+    if (id !== statisticsSegmentId(caseType, location) || byId.has(id) || !expectedIds.has(id)) {
+      throw new Error(`invalid or duplicate KCSC statistics segment: ${id || 'missing'}`);
+    }
+    const cases = count(segment.cases, `statistics.segments.${id}.cases`);
+    if (!segment.breakdowns || typeof segment.breakdowns !== 'object' || Array.isArray(segment.breakdowns)) {
+      throw new Error(`statistics.segments.${id}.breakdowns must be an object`);
+    }
+    for (const field of BREAKDOWN_FIELDS) {
+      validateBreakdown(segment.breakdowns[field], cases, `statistics.segments.${id}.breakdowns.${field}`);
+    }
+    validateFeatureCoverage(segment.features, cases, `statistics.segments.${id}.features`, featureNames);
+    byId.set(id, segment);
+  }
+  if (byId.size !== expectedIds.size) throw new Error('KCSC statistics segments are incomplete');
+
+  const overall = byId.get('all');
+  if (options.expectedCases != null && overall.cases !== count(options.expectedCases, 'expectedCases')) {
+    throw new Error(`KCSC statistics case count ${overall.cases} does not match archive count ${options.expectedCases}`);
+  }
+  for (const name of featureNames) {
+    if (overall.features[name].rows !== options.features[name].rows) {
+      throw new Error(`KCSC statistics ${name} rows do not match the data manifest`);
+    }
+  }
+  if (caseTypes.reduce((sum, value) => sum + byId.get(statisticsSegmentId(value, '')).cases, 0) !== overall.cases) {
+    throw new Error('KCSC statistics case-type segments do not reconcile');
+  }
+  if (locations.reduce((sum, value) => sum + byId.get(statisticsSegmentId('', value)).cases, 0) !== overall.cases) {
+    throw new Error('KCSC statistics location segments do not reconcile');
+  }
+  for (const caseType of caseTypes) {
+    const total = locations.reduce((sum, location) => (
+      sum + byId.get(statisticsSegmentId(caseType, location)).cases
+    ), 0);
+    if (total !== byId.get(statisticsSegmentId(caseType, '')).cases) {
+      throw new Error(`KCSC statistics ${caseType} location segments do not reconcile`);
+    }
+  }
+  Object.defineProperty(statistics, '_segmentsById', { value: byId, configurable: true });
+  return statistics;
+}
+
+export function statisticsSegment(statistics, filters = {}) {
+  if (!statistics) return null;
+  const id = statisticsSegmentId(filters.caseType, filters.location);
+  const index = statistics._segmentsById || new Map(statistics.segments.map((segment) => [segment.id, segment]));
+  return index.get(id) || null;
+}
+
+export function statisticsCoveragePercent(featureCases, cases) {
+  return cases > 0 ? (Number(featureCases) / Number(cases)) * 100 : 0;
+}

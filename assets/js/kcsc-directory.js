@@ -60,6 +60,7 @@ export function validateDirectoryManifest(manifest, expectedCases = null) {
 
   let counted = 0;
   const seenGroups = new Set();
+  const sourceMetadata = new Map();
   for (const typeEntry of manifest.case_types) {
     const caseType = clean(typeEntry?.case_type).toLowerCase();
     if (!caseType || !Array.isArray(typeEntry?.locations)) throw new Error('invalid case type entry');
@@ -78,10 +79,18 @@ export function validateDirectoryManifest(manifest, expectedCases = null) {
         }
         seenGroups.add(key);
         const rows = strictCount(yearEntry.rows, `${caseType}.${location}.${year}.rows`);
+        const seenSources = new Set();
         yearEntry.sources.forEach((source) => {
-          if (!safeDirectoryPath(source?.path)) throw new Error(`invalid directory source path for ${key}`);
-          strictCount(source.rows, `${source.path}.rows`);
-          strictCount(source.size_bytes, `${source.path}.size_bytes`);
+          const path = safeDirectoryPath(source?.path);
+          if (!path || seenSources.has(path)) throw new Error(`invalid or duplicate directory source path for ${key}`);
+          seenSources.add(path);
+          const rows = strictCount(source.rows, `${path}.rows`);
+          const sizeBytes = strictCount(source.size_bytes, `${path}.size_bytes`);
+          const prior = sourceMetadata.get(path);
+          if (prior && (prior.rows !== rows || prior.sizeBytes !== sizeBytes)) {
+            throw new Error(`conflicting directory source metadata for ${path}`);
+          }
+          sourceMetadata.set(path, { rows, sizeBytes });
         });
         countedLocation += rows;
       }
@@ -92,6 +101,20 @@ export function validateDirectoryManifest(manifest, expectedCases = null) {
     counted += typeRows;
   }
   if (counted !== caseCount) throw new Error(`directory group count ${counted} does not match case_count ${caseCount}`);
+  if (manifest.source_index_format != null && manifest.source_index_format !== 'ndjson-prefix-shards-v1') {
+    throw new Error(`unsupported source index format: ${clean(manifest.source_index_format)}`);
+  }
+  if (manifest.source_index_parts != null
+    && strictCount(manifest.source_index_parts, 'source_index_parts') !== sourceMetadata.size) {
+    throw new Error('source index part count does not match referenced directory sources');
+  }
+  if (manifest.source_index_rows != null) {
+    const sourceRows = strictCount(manifest.source_index_rows, 'source_index_rows');
+    const referencedRows = [...sourceMetadata.values()].reduce((sum, source) => sum + source.rows, 0);
+    if (sourceRows !== caseCount || referencedRows !== sourceRows) {
+      throw new Error('source index row count does not match directory coverage');
+    }
+  }
   return manifest;
 }
 

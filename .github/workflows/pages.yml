@@ -27,9 +27,11 @@ jobs:
           node-version: "24"
       - name: Check viewer and shared theme static contracts
         run: node scripts/check_viewer_static.mjs
-      - name: Test case directory and load progress
+      - name: Test viewer data contracts and load progress
         run: |
+          node assets/js/kcsc-data-client.test.mjs
           node assets/js/kcsc-directory.test.mjs
+          node assets/js/kcsc-statistics.test.mjs
           node assets/js/load-progress.test.mjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

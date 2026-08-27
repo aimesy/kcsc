@@ -10,6 +10,8 @@ KCSC is split into three repositories:
 
 The product viewer does not commit bulk data. It loads `kcsc-data` by default
 from `https://raw.githubusercontent.com/aimesy/kcsc-data/master/`.
+All public data access flows through `assets/js/kcsc-data-client.js`; operational
+authentication and capture remain exclusively in `aimesy/kcsc-ops`.
 
 ## Operational source boundary
 
