@@ -131,7 +131,7 @@ try {
 
   const desktop = await evaluate(`(() => ({
     scope: document.getElementById('cs-scope-label')?.textContent,
-    cases: document.querySelector('.cs-stat-metric strong')?.title,
+    cases: document.querySelector('.cs-stat-metric strong')?.textContent.trim(),
     metrics: document.querySelectorAll('.cs-stat-metric').length,
     cards: document.querySelectorAll('.cs-stat-card').length,
     coverage: document.querySelectorAll('.cs-stat-coverage li').length,
@@ -156,13 +156,13 @@ try {
     location.dispatchEvent(new Event('change', { bubbles: true }));
   })()`);
   await waitFor(
-    `document.querySelector('.cs-stat-metric strong')?.title === ${JSON.stringify(new Intl.NumberFormat('en-US').format(selectedSegment.cases))}`,
+    `document.querySelector('.cs-stat-metric strong')?.textContent.trim() === ${JSON.stringify(new Intl.NumberFormat('en-US').format(selectedSegment.cases))}`,
     'filtered statistics segment',
   );
   const filtered = await evaluate(`(() => ({
     type: document.getElementById('cs-stat-type')?.value,
     location: document.getElementById('cs-stat-location')?.value,
-    cases: document.querySelector('.cs-stat-metric strong')?.title,
+    cases: document.querySelector('.cs-stat-metric strong')?.textContent.trim(),
     meta: document.getElementById('cs-entity-meta')?.textContent,
   }))()`);
 
@@ -183,6 +183,8 @@ try {
       attorneyRows: ${JSON.stringify(attorneyRows)},
       judgmentRows: ${JSON.stringify(judgmentRows)},
       controls: document.querySelectorAll('.cs-stat-controls select, .cs-stat-controls input').length,
+      matterTypeOptions: document.querySelector('[data-statistics-control=judgmentMatterType]')?.options.length || 0,
+      matterCategoryOptions: document.querySelector('[data-statistics-control=judgmentMatterCategory]')?.options.length || 0,
       csv: Boolean(document.querySelector('[data-statistics-export]')),
     }))()`);
     await evaluate("document.querySelector('[data-statistics-mode=dashboard]').click()");
@@ -217,12 +219,13 @@ try {
     || !desktop.visibleNavigation || !desktop.navigationActive || desktop.shareableScope !== 'statistics') {
     throw new Error(`unexpected desktop statistics state: ${JSON.stringify(desktop)}`);
   }
-  if (desktop.modes.join('|') !== 'Aggregates|Dashboard|Attorney rankings|Judgment rankings'
+  if (desktop.modes.join('|') !== 'Dashboard|Aggregates|Attorney rankings|Judgment rankings'
     || desktop.selectedMode !== 'Dashboard') {
     throw new Error(`statistics mode parity failed: ${JSON.stringify(desktop)}`);
   }
   if (parity && (parity.aggregateRows < 1 || parity.attorneyRows < 1 || parity.judgmentRows < 1
-    || parity.controls < 5 || !parity.csv)) {
+    || parity.controls < 7 || parity.matterTypeOptions < 2 || parity.matterCategoryOptions < 2
+    || !parity.csv)) {
     throw new Error(`ranking browser parity failed: ${JSON.stringify(parity)}`);
   }
   if (desktop.metrics !== 6 || desktop.cards !== 6 || desktop.coverage !== 9 || desktop.years < 8
