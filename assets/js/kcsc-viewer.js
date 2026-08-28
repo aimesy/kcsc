@@ -1680,7 +1680,7 @@ function updateStatisticsControl(name, value, options = {}) {
 
 function statisticsModebar() {
   const labels = [
-    ['dashboard', 'Dashboard'], ['aggregates', 'Aggregates'],
+    ['dashboard', 'Dashboard'], ['aggregates', 'Case types'],
     ['rankings', 'Attorney rankings'], ['judgments', 'Judgment rankings'],
   ];
   return `<nav class="cs-stat-modebar" role="tablist" aria-label="Statistics mode">${labels.map(([key, label]) => (
@@ -1835,12 +1835,26 @@ function statisticsRankingTopic() {
   return topics.find((topic) => topic.topic === state.statisticsControls.topic) || topics[0] || null;
 }
 
+function statisticsPracticeShareAvailable(topic, category = state.statisticsControls.category) {
+  return topic?.topic !== 'all_matters' || Boolean(category);
+}
+
+function statisticsRankingMeasures(topic, category) {
+  if (statisticsPracticeShareAvailable(topic, category)) return STATISTICS_MEASURES;
+  return new Map([...STATISTICS_MEASURES].filter(([key]) => key !== 'practice_share_percent'));
+}
+
 function statisticsAttorneyRows() {
   const controls = state.statisticsControls;
   const topic = statisticsRankingTopic();
   if (!topic) return { topic: null, rows: [] };
   if (topic.topic !== controls.topic) controls.topic = topic.topic;
   const category = topic.categories.some((item) => item.key === controls.category) ? controls.category : '';
+  const measures = statisticsRankingMeasures(topic, category);
+  if (!measures.has(controls.measure)) {
+    controls.measure = defaultStatisticsControls().measure;
+    saveStatisticsControls();
+  }
   const rows = [];
   for (const attorney of topic.attorneys) {
     if (isGenericCounselName(attorney.attorney_name)) continue;
@@ -1883,10 +1897,11 @@ function statisticsAttorneyContent() {
   const { topic, rows } = statisticsAttorneyRows();
   const sorted = statisticsSortRows(rows, 'attorney_name', controls.measure);
   const shown = statisticsApplyLimit(sorted);
+  const measures = statisticsRankingMeasures(topic, controls.category);
   const measureKind = controls.measure.includes('amount') ? 'currency' : controls.measure === 'practice_share_percent' ? 'percent' : 'number';
   const extra = `<label>Matter type<select data-statistics-control="topic">${statisticsSelectOptions(state.attorneyRankings.topics.map((item) => [item.topic, item.label]), topic.topic)}</select></label>
     <label>Category<select data-statistics-control="category">${statisticsSelectOptions([['', 'All categories'], ...topic.categories.map((item) => [item.key, `${item.label} (${nf.format(item.case_count)})`])], controls.category)}</select></label>
-    <label>Measure<select data-statistics-control="measure">${statisticsSelectOptions([...STATISTICS_MEASURES], controls.measure)}</select></label>`;
+    <label>Measure<select data-statistics-control="measure">${statisticsSelectOptions([...measures], controls.measure)}</select></label>`;
   const columns = [
     { key: 'rank', label: '#', numeric: true }, { key: 'attorney_name', label: 'Attorney / counsel' },
     { key: 'attorney_id', label: 'Attorney ID' },
@@ -1899,7 +1914,8 @@ function statisticsAttorneyContent() {
     { key: 'judgment_total_amount', label: 'Reported judgments', numeric: true, render: (row) => statisticsFormatValue(row.judgment_total_amount, 'currency') },
     { key: 'judgment_count', label: 'Judgment cases', numeric: true, render: (row) => nf.format(row.judgment_count) },
     { key: 'largest_judgment_amount', label: 'Largest reported judgment', numeric: true, render: (row) => statisticsFormatValue(row.largest_judgment_amount, 'currency') },
-  ];
+  ].filter((column) => statisticsPracticeShareAvailable(topic, controls.category)
+    || column.key !== 'practice_share_percent');
   const content = controls.view === 'table' ? statisticsTable(columns, shown) : statisticsChart(shown.slice(0, 100), 'attorney_name', controls.measure, measureKind);
   state.statisticsExport = { filename: `kcsc-attorney-rankings-${topic.topic}.csv`, columns: columns.map((column) => [column.label, column.key]), rows: sorted };
   return `${statisticsCommonControls(extra, 'rankingFilter')}<p class="cs-stat-result-state">${escapeHtml(topic.label)} · ${nf.format(shown.length)} of ${nf.format(rows.length)} ranked counsel identities · competition ranks · stable attorney IDs preserved in export</p>${content}`;

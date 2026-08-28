@@ -86,9 +86,12 @@ assert(app.includes("$('cs-statistics-btn').addEventListener('click'"), 'visible
 assert(app.includes('statisticsFeatureCoverage'), 'feature coverage statistics are missing');
 assert(app.includes('statisticsTrend'), 'filing trend statistics are missing');
 assert(app.includes("['aggregates', 'dashboard', 'rankings', 'judgments']"), 'SFSC-compatible statistics modes are missing');
-assert(app.indexOf("['dashboard', 'Dashboard']") < app.indexOf("['aggregates', 'Aggregates']")
-  && app.indexOf("['aggregates', 'Aggregates']") < app.indexOf("['rankings', 'Attorney rankings']"),
+assert(app.indexOf("['dashboard', 'Dashboard']") < app.indexOf("['aggregates', 'Case types']")
+  && app.indexOf("['aggregates', 'Case types']") < app.indexOf("['rankings', 'Attorney rankings']"),
   'Dashboard must be the leftmost statistics mode');
+assert(app.includes("key !== 'practice_share_percent'")
+  && app.includes("column.key !== 'practice_share_percent'"),
+  'Practice share must be hidden for the all-jurisdictions rankings scope');
 assert(app.includes('judgmentMatterType') && app.includes('judgmentMatterCategory'),
   'judgment matter type/category controls are missing');
 assert(app.includes('<strong>${escapeHtml(nf.format(value))}</strong>'),

@@ -64,7 +64,7 @@ remain readable; new indexed filters appear only when the manifest declares the
 corresponding compact-index field and positive feature row count.
 
 The Statistics scope now follows the shared SFSC interaction model: Dashboard,
-Aggregates, Attorney rankings, and Judgment rankings. It includes exact headline
+Case types, Attorney rankings, and Judgment rankings. It includes exact headline
 totals, exact filing-year trends, type/location/status/node breakdowns,
 case-versus-row feature coverage, seven attorney ranking measures, category
 contributions, competition ranks, civil explicit-total and criminal-element

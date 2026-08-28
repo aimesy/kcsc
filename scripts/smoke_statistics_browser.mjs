@@ -175,12 +175,35 @@ try {
     await evaluate("document.querySelector('[data-statistics-mode=rankings]').click()");
     await waitFor("document.querySelectorAll('.cs-stat-table tbody tr').length > 0", 'attorney rankings');
     const attorneyRows = await evaluate("document.querySelectorAll('.cs-stat-table tbody tr').length");
+    const allJurisdictionsPracticeShare = await evaluate(`(() => ({
+      measure: [...document.querySelector('[data-statistics-control=measure]').options]
+        .some((option) => option.value === 'practice_share_percent'),
+      column: [...document.querySelectorAll('.cs-stat-table th')]
+        .some((heading) => heading.textContent.trim() === 'Practice share'),
+    }))()`);
+    await evaluate(`(() => {
+      const category = document.querySelector('[data-statistics-control=category]');
+      category.value = category.options[1].value;
+      category.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    await waitFor(
+      "[...document.querySelectorAll('.cs-stat-table th')].some((heading) => heading.textContent.trim() === 'Practice share')",
+      'category-specific practice share',
+    );
+    const narrowedPracticeShare = await evaluate(`(() => ({
+      measure: [...document.querySelector('[data-statistics-control=measure]').options]
+        .some((option) => option.value === 'practice_share_percent'),
+      column: [...document.querySelectorAll('.cs-stat-table th')]
+        .some((heading) => heading.textContent.trim() === 'Practice share'),
+    }))()`);
     await evaluate("document.querySelector('[data-statistics-mode=judgments]').click()");
     await waitFor("document.querySelectorAll('.cs-stat-table tbody tr').length > 0", 'judgment rankings');
     const judgmentRows = await evaluate("document.querySelectorAll('.cs-stat-table tbody tr').length");
     parity = await evaluate(`(() => ({
       aggregateRows: ${JSON.stringify(aggregateRows)},
       attorneyRows: ${JSON.stringify(attorneyRows)},
+      allJurisdictionsPracticeShare: ${JSON.stringify(allJurisdictionsPracticeShare)},
+      narrowedPracticeShare: ${JSON.stringify(narrowedPracticeShare)},
       judgmentRows: ${JSON.stringify(judgmentRows)},
       controls: document.querySelectorAll('.cs-stat-controls select, .cs-stat-controls input').length,
       matterTypeOptions: document.querySelector('[data-statistics-control=judgmentMatterType]')?.options.length || 0,
@@ -219,13 +242,14 @@ try {
     || !desktop.visibleNavigation || !desktop.navigationActive || desktop.shareableScope !== 'statistics') {
     throw new Error(`unexpected desktop statistics state: ${JSON.stringify(desktop)}`);
   }
-  if (desktop.modes.join('|') !== 'Dashboard|Aggregates|Attorney rankings|Judgment rankings'
+  if (desktop.modes.join('|') !== 'Dashboard|Case types|Attorney rankings|Judgment rankings'
     || desktop.selectedMode !== 'Dashboard') {
     throw new Error(`statistics mode parity failed: ${JSON.stringify(desktop)}`);
   }
   if (parity && (parity.aggregateRows < 1 || parity.attorneyRows < 1 || parity.judgmentRows < 1
     || parity.controls < 7 || parity.matterTypeOptions < 2 || parity.matterCategoryOptions < 2
-    || !parity.csv)) {
+    || parity.allJurisdictionsPracticeShare.measure || parity.allJurisdictionsPracticeShare.column
+    || !parity.narrowedPracticeShare.measure || !parity.narrowedPracticeShare.column || !parity.csv)) {
     throw new Error(`ranking browser parity failed: ${JSON.stringify(parity)}`);
   }
   if (desktop.metrics !== 6 || desktop.cards !== 6 || desktop.coverage !== 9 || desktop.years < 8
