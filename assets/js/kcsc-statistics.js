@@ -59,6 +59,34 @@ function validateRankingSources(sources) {
   }
 }
 
+function validateFilingYearCoverage(coverage) {
+  if (coverage == null) return;
+  if (!coverage || typeof coverage !== 'object' || Array.isArray(coverage)
+      || clean(coverage.schema) !== 'kcsc-filing-year-coverage-v1'
+      || !Array.isArray(coverage.years)) {
+    throw new Error('statistics.filing_year_coverage is invalid');
+  }
+  const years = new Set();
+  for (const [index, row] of coverage.years.entries()) {
+    const year = clean(row?.year);
+    const completeDays = count(
+      row?.complete_days,
+      `statistics.filing_year_coverage.years[${index}].complete_days`,
+    );
+    const expectedDays = count(
+      row?.expected_days,
+      `statistics.filing_year_coverage.years[${index}].expected_days`,
+    );
+    const expectedStatus = completeDays === expectedDays
+      ? 'complete' : completeDays ? 'partial' : 'unavailable';
+    if (!/^\d{4}$/.test(year) || years.has(year) || expectedDays === 0
+        || completeDays > expectedDays || clean(row?.status) !== expectedStatus) {
+      throw new Error(`invalid statistics filing-year coverage row: ${year || index}`);
+    }
+    years.add(year);
+  }
+}
+
 export function statisticsSegmentId(caseType = '', location = '') {
   const parts = [];
   if (clean(caseType)) parts.push(`type:${clean(caseType)}`);
@@ -120,6 +148,7 @@ export function validateKcscStatistics(statistics, options = {}) {
   if (!featureNames.length) throw new Error('KCSC statistics require data manifest feature descriptors');
   if (!Array.isArray(statistics.segments)) throw new Error('statistics.segments must be an array');
   validateRankingSources(statistics.ranking_sources);
+  validateFilingYearCoverage(statistics.filing_year_coverage);
 
   const expectedIds = new Set(['all']);
   caseTypes.forEach((caseType) => expectedIds.add(statisticsSegmentId(caseType, '')));

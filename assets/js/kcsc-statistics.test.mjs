@@ -40,6 +40,14 @@ const statistics = {
   generated_at: '2026-08-27T00:00:00Z',
   grain: 'one canonical case',
   filters: { case_types: ['civil'], locations: ['KNT', 'SEA'] },
+  filing_year_coverage: {
+    schema: 'kcsc-filing-year-coverage-v1',
+    years: [
+      { year: '2024', complete_days: 112, expected_days: 366, status: 'partial' },
+      { year: '2025', complete_days: 365, expected_days: 365, status: 'complete' },
+      { year: '2026', complete_days: 0, expected_days: 238, status: 'unavailable' },
+    ],
+  },
   segments: [
     segment('', '', 1, one),
     segment('civil', '', 1, one),
@@ -60,6 +68,14 @@ assert.equal(statisticsSegment(validated, { caseType: 'civil', location: 'KNT' }
 assert.equal(statisticsSegment(validated, { caseType: 'civil', location: 'SEA' }).cases, 0);
 assert.equal(statisticsCoveragePercent(1, 4), 25);
 assert.equal(statisticsCoveragePercent(1, 0), 0);
+
+const badCoverage = structuredClone(statistics);
+badCoverage.filing_year_coverage.years[0].status = 'complete';
+assert.throws(() => validateKcscStatistics(badCoverage, {
+  expectedCases: 1,
+  features: manifestFeatures,
+  generatedAt: '2026-08-27T00:00:00Z',
+}), /invalid statistics filing-year coverage row/);
 
 const badCount = structuredClone(statistics);
 badCount.segments[0].breakdowns.filing_year[0].cases = 2;

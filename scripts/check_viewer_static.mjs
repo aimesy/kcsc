@@ -85,6 +85,11 @@ assert(app.includes('function requestedScopeFromLocation()'), 'shareable statist
 assert(app.includes("$('cs-statistics-btn').addEventListener('click'"), 'visible statistics navigation is not wired');
 assert(app.includes('statisticsFeatureCoverage'), 'feature coverage statistics are missing');
 assert(app.includes('statisticsTrend'), 'filing trend statistics are missing');
+assert(app.includes('cs-stat-capture-legend') && app.includes('statistics.filing_year_coverage'),
+  'filing-year chart must distinguish archive coverage from court filing volume');
+assert(!app.includes('Published KCSC corpus at the one-case grain.')
+  && !app.includes('Cases by canonical case type.'),
+  'dashboard subtitle copy must remain absent');
 assert(app.includes("['aggregates', 'dashboard', 'rankings', 'judgments']"), 'SFSC-compatible statistics modes are missing');
 assert(app.indexOf("['dashboard', 'Dashboard']") < app.indexOf("['aggregates', 'Case types']")
   && app.indexOf("['aggregates', 'Case types']") < app.indexOf("['rankings', 'Attorney rankings']"),

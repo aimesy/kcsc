@@ -1089,7 +1089,7 @@
     }
     .cs-stat-trend li {
       display: grid;
-      grid-template-rows: 1.2rem 170px 1rem;
+      grid-template-rows: 1.2rem 170px 1rem 2rem;
       gap: 0.18rem;
       min-width: 0;
       text-align: center;
@@ -1114,6 +1114,30 @@
       border: 1px solid color-mix(in srgb, var(--link) 75%, var(--ink));
       border-bottom: 0;
     }
+    .cs-stat-trend li.is-partial .cs-stat-trend-bar i {
+      background: repeating-linear-gradient(135deg, var(--warn), var(--warn) 5px, var(--warn-bg) 5px, var(--warn-bg) 9px);
+      border-color: var(--warn);
+    }
+    .cs-stat-trend li.is-unavailable .cs-stat-trend-bar {
+      background: repeating-linear-gradient(135deg, transparent, transparent 8px, var(--rule-2) 8px, var(--rule-2) 10px);
+      border: 1px dashed var(--warn-border);
+    }
+    .cs-stat-trend-status {
+      color: var(--ink-3);
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+    .cs-stat-trend li.is-partial .cs-stat-trend-status,
+    .cs-stat-trend li.is-unavailable .cs-stat-trend-status { color: var(--warn); }
+    .cs-stat-capture-legend {
+      display: flex;
+      gap: 0.55rem;
+      padding: 0.45rem 0.7rem;
+      border-bottom: 1px solid var(--rule-2);
+      color: var(--ink-3);
+      font: 0.61rem/1.35 var(--font-mono);
+    }
+    .cs-stat-capture-legend strong { color: var(--warn); white-space: nowrap; }
     .cs-stat-coverage {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1333,7 +1357,7 @@
       <div class="cs-hint">Loading archived dockets...</div>
     </div>
   </div>
-  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260828-ranking-scope-1"></script>
+  <script type="module" src="./assets/js/kcsc-viewer.js?v=20260828-filing-coverage-1"></script>
   <footer aria-label="Terms" style="position:fixed;right:.75rem;bottom:.5rem;z-index:var(--amyc-public-records-footer-z, 80);font:11px/1.2 system-ui,sans-serif;opacity:.58"><a href="./terms.html" style="color:inherit;text-decoration:none">T&amp;Cs</a></footer>
 </body>
 </html>

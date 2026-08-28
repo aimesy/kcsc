@@ -1551,15 +1551,14 @@ function statisticsFeatureLabel(name) {
   }[name] || name.replace(/_/g, ' ');
 }
 
-function statisticsMetric(label, value, note) {
+function statisticsMetric(label, value) {
   return `<article class="cs-stat-metric">
     <span>${escapeHtml(label)}</span>
     <strong>${escapeHtml(nf.format(value))}</strong>
-    <small>${escapeHtml(note)}</small>
   </article>`;
 }
 
-function statisticsRanking(title, subtitle, rows, cases, options = {}) {
+function statisticsRanking(title, rows, cases, options = {}) {
   const maximum = Math.max(1, ...rows.map((row) => num(row.cases)));
   const bars = rows.map((row) => {
     const width = (num(row.cases) / maximum) * 100;
@@ -1571,13 +1570,14 @@ function statisticsRanking(title, subtitle, rows, cases, options = {}) {
     </li>`;
   }).join('');
   return `<section class="cs-stat-card${options.wide ? ' cs-stat-card-wide' : ''}">
-    <header><h3>${escapeHtml(title)}</h3><p>${escapeHtml(subtitle)}</p></header>
+    <header><h3>${escapeHtml(title)}</h3></header>
     <ol class="cs-stat-ranking${options.split ? ' cs-stat-ranking-split' : ''}">${bars || '<li class="cs-empty">No values.</li>'}</ol>
   </section>`;
 }
 
-function completeStatisticsYears(rows, domainRows) {
+function completeStatisticsYears(rows, domainRows, coverage) {
   const values = new Map(rows.map((row) => [text(row.value), num(row.cases)]));
+  const coverageByYear = new Map((coverage?.years || []).map((row) => [text(row.year), row]));
   const numericYears = domainRows
     .map((row) => text(row.value))
     .filter((value) => /^\d{4}$/.test(value))
@@ -1587,7 +1587,12 @@ function completeStatisticsYears(rows, domainRows) {
   const maximum = Math.max(...numericYears);
   const completed = Array.from({ length: maximum - minimum + 1 }, (_value, index) => {
     const year = String(minimum + index);
-    return { value: year, cases: values.get(year) || 0 };
+    return {
+      value: year,
+      cases: values.get(year) || 0,
+      observed: values.has(year),
+      coverage: coverageByYear.get(year) || null,
+    };
   });
   if (domainRows.some((row) => text(row.value) === 'unknown')) {
     completed.push({ value: 'unknown', cases: values.get('unknown') || 0 });
@@ -1595,20 +1600,49 @@ function completeStatisticsYears(rows, domainRows) {
   return completed;
 }
 
-function statisticsTrend(rows, cases, domainRows = rows) {
-  const completedRows = completeStatisticsYears(rows, domainRows);
+function statisticsYearRanges(years) {
+  const values = [...new Set(years.map(Number).filter(Number.isFinite))].sort((a, b) => a - b);
+  const ranges = [];
+  for (const year of values) {
+    const last = ranges.at(-1);
+    if (last && last[1] === year - 1) last[1] = year;
+    else ranges.push([year, year]);
+  }
+  return ranges.map(([start, end]) => start === end ? String(start) : `${start}–${end}`).join(', ');
+}
+
+function statisticsTrend(rows, cases, domainRows = rows, coverage = null) {
+  const completedRows = completeStatisticsYears(rows, domainRows, coverage);
   const maximum = Math.max(1, ...completedRows.map((row) => num(row.cases)));
   const bars = completedRows.map((row) => {
     const height = (num(row.cases) / maximum) * 100;
     const label = row.value === 'unknown' ? '?' : row.value;
-    return `<li aria-label="${escapeHtml(row.value)}: ${escapeHtml(nf.format(row.cases))} cases">
-      <span class="cs-stat-trend-value">${escapeHtml(nf.format(row.cases))}</span>
-      <span class="cs-stat-trend-bar"><i style="height:${height.toFixed(3)}%"></i></span>
+    const status = row.coverage?.status || (row.observed ? 'unknown' : 'unavailable');
+    const incomplete = status === 'partial' || status === 'unavailable';
+    const value = status === 'unavailable' && !row.observed ? '—' : nf.format(row.cases);
+    const days = row.coverage
+      ? `${nf.format(row.coverage.complete_days)}/${nf.format(row.coverage.expected_days)} days`
+      : incomplete ? 'coverage unavailable' : '';
+    const aria = `${row.value}: ${value === '—' ? 'not captured' : `${nf.format(row.cases)} archived cases`}`
+      + (days ? `; ${days}` : '');
+    return `<li class="is-${escapeHtml(status)}" aria-label="${escapeHtml(aria)}">
+      <span class="cs-stat-trend-value">${escapeHtml(value)}</span>
+      <span class="cs-stat-trend-bar">${value === '—' ? '' : `<i style="height:${height.toFixed(3)}%"></i>`}</span>
       <span class="cs-stat-trend-year">${escapeHtml(label)}</span>
+      <span class="cs-stat-trend-status">${escapeHtml(status === 'complete' ? 'complete' : days || status)}</span>
     </li>`;
   }).join('');
+  const partialYears = statisticsYearRanges(completedRows
+    .filter((row) => row.coverage?.status === 'partial').map((row) => row.value));
+  const unavailableYears = statisticsYearRanges(completedRows
+    .filter((row) => row.coverage?.status === 'unavailable').map((row) => row.value));
+  const caveats = [
+    partialYears ? `Partial capture: ${partialYears}.` : '',
+    unavailableYears ? `Not yet captured: ${unavailableYears}.` : '',
+  ].filter(Boolean).join(' ');
   return `<section class="cs-stat-card cs-stat-card-wide">
-    <header><h3>Cases filed by year</h3><p>${nf.format(cases)} filtered cases; bars start at zero and years without archived filings remain visible at zero.</p></header>
+    <header><h3>Archived cases by filing year</h3></header>
+    <div class="cs-stat-capture-legend" role="note"><strong>Capture coverage</strong><span>${nf.format(cases)} archived cases. ${escapeHtml(caveats || 'Coverage status unavailable.')}</span></div>
     <ol class="cs-stat-trend">${bars || '<li class="cs-empty">No filing years.</li>'}</ol>
   </section>`;
 }
@@ -1626,7 +1660,7 @@ function statisticsFeatureCoverage(features, cases) {
     </li>`;
   }).join('');
   return `<section class="cs-stat-card cs-stat-card-wide">
-    <header><h3>Feature coverage</h3><p>Share of filtered cases with at least one row; exact case and row counts shown below each bar.</p></header>
+    <header><h3>Feature coverage</h3></header>
     <ol class="cs-stat-coverage">${rows}</ol>
   </section>`;
 }
@@ -1769,27 +1803,27 @@ function statisticsChart(rows, labelKey, measureKey, kind = 'number') {
 function statisticsDashboardContent(statistics, segment) {
   const asOf = statisticsTimestamp(statistics.generated_at);
   const metrics = [
-    statisticsMetric('Cases', segment.cases, 'distinct canonical records'),
-    statisticsMetric('Docket entries', segment.features.docket.rows, `${nf.format(segment.features.docket.cases)} cases covered`),
-    statisticsMetric('Hearings', segment.features.hearings.rows, `${nf.format(segment.features.hearings.cases)} cases covered`),
-    statisticsMetric('Party rows', segment.features.parties.rows, `${nf.format(segment.features.parties.cases)} cases covered`),
-    statisticsMetric('Document index rows', segment.features.documents.rows, `${nf.format(segment.features.documents.cases)} cases indexed`),
-    statisticsMetric('Judgments', segment.features.judgments.rows, `${nf.format(segment.features.judgments.cases)} cases covered`),
+    statisticsMetric('Cases', segment.cases),
+    statisticsMetric('Docket entries', segment.features.docket.rows),
+    statisticsMetric('Hearings', segment.features.hearings.rows),
+    statisticsMetric('Party rows', segment.features.parties.rows),
+    statisticsMetric('Document index rows', segment.features.documents.rows),
+    statisticsMetric('Judgments', segment.features.judgments.rows),
   ].join('');
   const definitions = statistics.definitions || {};
   const overallSegment = statisticsSegment(statistics, {});
   state.statisticsExport = null;
-  return `<header class="cs-stat-header"><div><h2>Archive statistics</h2><p>Published KCSC corpus at the one-case grain. Filters apply to every metric and chart.</p></div>
+  return `<header class="cs-stat-header"><div><h2>Archive statistics</h2></div>
     <div class="cs-stat-filters" aria-label="Statistics filters">
       <label>Case type<select id="cs-stat-type">${statisticsOptionList(statistics.filters.case_types, state.statisticsFilters.caseType, 'All types')}</select></label>
       <label>Location<select id="cs-stat-location">${statisticsOptionList(statistics.filters.locations, state.statisticsFilters.location, 'All locations')}</select></label>
     </div></header>
     <section class="cs-stat-metrics" aria-label="Headline archive metrics">${metrics}</section>
-    <div class="cs-stat-grid">${statisticsTrend(segment.breakdowns.filing_year, segment.cases, overallSegment.breakdowns.filing_year)}
-      ${statisticsRanking('Case type mix', 'Cases by canonical case type.', segment.breakdowns.case_type, segment.cases)}
-      ${statisticsRanking('Location mix', 'Cases by SEA or KNT suffix.', segment.breakdowns.location, segment.cases)}
-      ${statisticsRanking('Status', 'Cases by normalized status group.', segment.breakdowns.status_group, segment.cases, { wide: true, split: true })}
-      ${statisticsRanking('Portal node', 'Cases by preserved KCSC portal node.', segment.breakdowns.portal_node, segment.cases, { wide: true })}
+    <div class="cs-stat-grid">${statisticsTrend(segment.breakdowns.filing_year, segment.cases, overallSegment.breakdowns.filing_year, statistics.filing_year_coverage)}
+      ${statisticsRanking('Case type mix', segment.breakdowns.case_type, segment.cases)}
+      ${statisticsRanking('Location mix', segment.breakdowns.location, segment.cases)}
+      ${statisticsRanking('Status', segment.breakdowns.status_group, segment.cases, { wide: true, split: true })}
+      ${statisticsRanking('Portal node', segment.breakdowns.portal_node, segment.cases, { wide: true })}
       ${statisticsFeatureCoverage(segment.features, segment.cases)}</div>
     <footer class="cs-stat-method"><strong>Source and definitions</strong><span>Generated ${escapeHtml(asOf)} from ${escapeHtml(statistics.source)}.</span>
       <span>Cases: ${escapeHtml(definitions.cases || 'Distinct canonical case records.')}</span>
