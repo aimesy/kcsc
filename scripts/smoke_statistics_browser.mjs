@@ -145,6 +145,14 @@ try {
       && getComputedStyle(document.getElementById('cs-reset-btn')).display === 'none'
       && getComputedStyle(document.getElementById('cs-search')).display === 'none',
     overflow: document.documentElement.scrollWidth > window.innerWidth,
+    subtitles: document.querySelectorAll('.cs-stat-metric small, .cs-stat-card > header p, .cs-stat-header p').length,
+    filingYears: Object.fromEntries([...document.querySelectorAll('.cs-stat-trend li')].map((row) => [
+      row.querySelector('.cs-stat-trend-year')?.textContent.trim(),
+      {
+        value: row.querySelector('.cs-stat-trend-value')?.textContent.trim(),
+        status: row.querySelector('.cs-stat-trend-status')?.textContent.trim(),
+      },
+    ])),
   }))()`);
 
   await evaluate(`(() => {
@@ -253,8 +261,19 @@ try {
     throw new Error(`ranking browser parity failed: ${JSON.stringify(parity)}`);
   }
   if (desktop.metrics !== 6 || desktop.cards !== 6 || desktop.coverage !== 9 || desktop.years < 8
-    || !desktop.controlsHidden || desktop.overflow) {
+    || !desktop.controlsHidden || desktop.overflow || desktop.subtitles) {
     throw new Error(`desktop statistics layout failed: ${JSON.stringify(desktop)}`);
+  }
+  for (const coverage of manifest.statistics.filing_year_coverage?.years || []) {
+    const shown = desktop.filingYears[coverage.year];
+    if (!shown) continue;
+    if (coverage.status === 'unavailable' && shown.value !== '—') {
+      throw new Error(`unavailable year rendered as a filing count: ${JSON.stringify({ coverage, shown })}`);
+    }
+    if (coverage.status !== 'complete'
+        && shown.status !== `${coverage.complete_days.toLocaleString()}/${coverage.expected_days.toLocaleString()} days`) {
+      throw new Error(`incomplete year lacks exact capture status: ${JSON.stringify({ coverage, shown })}`);
+    }
   }
   if (filtered.type !== selectedType || filtered.location !== selectedLocation
     || filtered.cases !== new Intl.NumberFormat('en-US').format(selectedSegment.cases)) {
