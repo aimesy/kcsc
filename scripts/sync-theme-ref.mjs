@@ -1,3 +1,4 @@
+// visibility: public; classification: theme-integration
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,10 +15,12 @@ const assets = new Set([
   "theme.css",
   "theme-bar.css",
   "bug-report.css",
+  "font-system.css",
   "theme.js",
   "bug-report.js",
+  "font-system.js",
 ]);
-const pattern = /https:\/\/cdn\.jsdelivr\.net\/gh\/aimesy\/themes@[^/"']+\/src\/(theme\.css|theme-bar\.css|bug-report\.css|theme\.js|bug-report\.js)/g;
+const pattern = /https:\/\/cdn\.jsdelivr\.net\/gh\/aimesy\/themes@[^/"']+\/src\/(theme\.css|theme-bar\.css|bug-report\.css|font-system\.css|theme\.js|bug-report\.js|font-system\.js)/g;
 
 for (const page of pages) {
   const filePath = path.join(repoRoot, page);
