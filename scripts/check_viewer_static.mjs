@@ -39,11 +39,9 @@ const allSharedThemeMatches = [...index.matchAll(
 
 assert(index.includes('<title>KCSC Case Archive</title>'), 'index title must identify KCSC');
 assert(index.includes('<meta name="theme-color" content="#24211d">'), 'theme-color metadata is missing');
-assert(index.includes('<link rel="terms-of-service" href="./terms.html">'), 'terms metadata is missing');
-assert(index.includes('href="./terms.html" style="color:inherit;text-decoration:none">T&amp;Cs</a>'), 'quiet T&Cs footer link is missing');
-assert(terms.includes('Version 0.2. Effective October 1, 2026.'), 'terms page version is missing');
-assert(terms.includes('I claim no ownership in official court records, government works') && terms.includes('A fact, figure, or record you obtain independently from its source record is outside these terms.'), 'source record boundary is missing from terms');
-assert(terms.includes('commercial artificial intelligence or machine learning system'), 'commercial AI license boundary is missing from terms');
+assert(index.includes('<link rel="terms-of-service" href="https://amyc.us/terms">'), 'terms metadata is missing');
+assert(index.includes('href="https://amyc.us/terms" style="color:inherit;text-decoration:none">T&amp;Cs</a>'), 'quiet T&Cs footer link is missing');
+assert(terms.includes('<meta http-equiv="refresh" content="0; url=https://amyc.us/terms">'), 'terms.html must redirect to the single data terms page');
 assert(sharedThemeMatches.length === sharedThemeAssets.size, 'shared theme asset set must contain exactly seven pinned assets');
 assert(allSharedThemeMatches.length === sharedThemeAssets.size, 'unexpected shared theme asset reference remains');
 assert(

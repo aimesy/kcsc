@@ -53,7 +53,7 @@ Data contract:
 KCSC does not yet have document-byte capture. The viewer surfaces deferred
 document rows from each case JSON instead of pretending document downloads exist.
 
-[T&Cs](https://kcsc.amyc.us/terms.html)
+[T&Cs](https://amyc.us/terms)
 
 The shared viewer data client validates `kcsc-data-manifest-v1`, keeps every
 manifest/index/parquet/case request inside the configured data base, and exposes
