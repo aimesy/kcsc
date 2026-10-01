@@ -1,34 +1,47 @@
 # Provisional Data Terms
 
-Version 0.1. Effective August 22, 2026.
+Version 0.2. Effective October 1, 2026.
 
 ## Scope
 
 I publish repositories, websites, APIs, downloads, releases, mirrors, and datasets. These terms govern each surface that links to them.
 
-I claim no ownership in facts, official court records, government works, or works owned by others. Those materials retain their existing legal status, and anyone may obtain source records directly from the originating agency. These terms govern only rights I hold and conditions on services I operate.
+I claim no ownership in official court records, government works, or works owned by others. Those materials retain their existing legal status, and anyone may obtain source records directly from the originating agency. A fact, figure, or record you obtain independently from its source record is outside these terms. These terms govern only rights I hold and conditions on services I operate.
 
-“Covered Materials” means my original selection, arrangement, normalization, annotations, classifications, schemas, documentation, source mapping, acquisition methods, software, interfaces, and other value added work. Access or use beyond a right supplied independently by law is conditioned on acceptance of these terms.
+“Covered Materials” means everything I publish on a surface these terms govern, including:
+
+- each figure, value, record, and field I extracted, transcribed, derived, or computed from source records, whether used alone or in compilation; and
+- my original selection, arrangement, normalization, annotations, classifications, schemas, documentation, source mapping, acquisition methods, software, interfaces, and other value added work.
+
+By accessing or using Covered Materials, you agree to these terms. If you do not agree, do not use them.
 
 ## Uses I permit
 
-I grant permission, without royalties, to use Covered Materials for:
+I grant you a non-exclusive, royalty-free license to use Covered Materials only for:
 
 - personal research;
 - academic research and teaching;
 - journalism and public oversight;
 - legal research, litigation, and representation of a client in a particular matter;
 - government work and nonprofit work serving a public interest; and
-- quotation or redistribution of reasonable excerpts with attribution.
+- quotation or redistribution of reasonable excerpts with the credit these terms require.
 
 Paid journalism, legal services, academic work, and consulting remain within these permitted uses when the work concerns a particular matter or analysis and the Covered Materials are neither sold as a product nor used to build a reusable commercial data asset.
+
+## Credit
+
+Every use of Covered Materials, including a single figure or value drawn from them, must credit me by name and identify where it came from, in this form or an equivalent that carries the same information:
+
+> Amy Chattopadhyay, [repository or site], [URL], [version or access date].
+
+Place the credit where the material appears, or in a source note or citation that covers it. The credit is required whether or not you also cite the source record.
 
 ## Conditions
 
 For every permitted use, I require you to:
 
-- identify the repository or site and, when practical, the version or access date;
-- preserve notices, provenance, and source references;
+- credit me as the Credit section requires;
+- keep intact all notices, provenance, and source references on any copy;
 - distinguish source records from my derived fields and research aids;
 - verify material facts against current official sources before a consequential use;
 - correct a material error promptly after learning of it; and
@@ -50,6 +63,8 @@ My written license is required to:
 
 I may grant separate written terms for a specific project. Open an issue in the repository that supplied the data and mark it “commercial license” to request one.
 
+I reserve every right these terms do not expressly grant.
+
 ## Uses I prohibit
 
 I prohibit use of Covered Materials to:
@@ -59,23 +74,24 @@ I prohibit use of Covered Materials to:
 - reidentify a person whose identity was masked, sealed, restricted, or protected;
 - publish sensitive personal identifiers without a legitimate public interest;
 - evade access controls, rate limits, payment controls, sealing rules, or legal restrictions;
-- present a derived field as an official court finding;
+- present a derived field as an official court or agency finding;
 - represent a repository or service as an official government system;
-- knowingly publish materially inaccurate data; or
-- make an employment, housing, credit, insurance, education, immigration, health care, or public benefits decision primarily from Covered Materials.
+- knowingly publish materially inaccurate data;
+- make an employment, housing, credit, insurance, education, immigration, health care, or public benefits decision primarily from Covered Materials; or
+- further any other unlawful purpose.
 
 ## Corrections and removal requests
 
-I accept documented correction and removal requests through the issue tracker or contact method on the surface that supplied the data. I may correct, annotate, restrict, or remove material when accuracy, safety, law, or source restrictions warrant action.
+I accept documented correction and removal requests through the issue tracker or contact method on the surface that supplied the data. I may correct, annotate, restrict, or remove material at any time, for any reason, and without notice, including when accuracy, safety, law, or source restrictions warrant it.
 
 ## Enforcement
 
-A material breach ends the permissions I grant under these terms. I may restore permission in writing after cure. Rights supplied independently by law remain available.
+The license in these terms terminates automatically if you materially breach them. I may reinstate it in writing after you cure the breach. Source records obtained independently from the originating agency remain available to everyone. Your obligations under these terms survive termination of the license.
 
 ## Warranty and liability
 
-I provide Covered Materials as available for research and informational use. To the maximum extent permitted by law, I disclaim warranties of accuracy, completeness, merchantability, fitness for a particular purpose, title, and noninfringement. I exclude liability for indirect, incidental, special, consequential, or punitive damages arising from use of Covered Materials.
+I provide Covered Materials “as is,” with all faults, for research and informational use. To the maximum extent permitted by law, I disclaim all warranties, express or implied, including warranties of accuracy, completeness, merchantability, fitness for a particular purpose, title, and noninfringement. I will not be liable for indirect, incidental, special, consequential, or punitive damages arising out of or relating to Covered Materials or their use. If you are dissatisfied with Covered Materials, your only remedy is to stop using them.
 
 ## Governing law and changes
 
-California law governs these terms, without regard to conflict of law rules. A later version applies to access and use after its stated effective date. A more specific written agreement controls where it expressly conflicts with these terms.
+California law governs these terms, without regard to conflict of law rules. Each access or use is governed by the version of these terms in effect at that time. A more specific written agreement controls where it expressly conflicts with these terms. If a court holds any provision unenforceable, that provision will be limited or eliminated to the minimum extent necessary, and the rest remains in effect.
