@@ -31,26 +31,23 @@ const sharedThemeAssets = new Set([
   'font-system.js',
 ]);
 const sharedThemeMatches = [...index.matchAll(
-  /https:\/\/cdn\.jsdelivr\.net\/gh\/aimesy\/themes@([0-9a-f]{40})\/src\/(theme\.css|theme-bar\.css|bug-report\.css|font-system\.css|theme\.js|bug-report\.js|font-system\.js)/g,
+  /https:\/\/aimesy\.github\.io\/themes\/src\/(theme\.css|theme-bar\.css|bug-report\.css|font-system\.css|theme\.js|bug-report\.js|font-system\.js)(?=["'])/g,
 )];
-const allSharedThemeMatches = [...index.matchAll(
-  /https:\/\/cdn\.jsdelivr\.net\/gh\/aimesy\/themes[^"' \s>]*/g,
-)];
+const allSharedThemeMatches = [...index.matchAll(/aimesy(?:\/|\.github\.io\/)themes\b/gi)];
 
 assert(index.includes('<title>KCSC Case Archive</title>'), 'index title must identify KCSC');
 assert(index.includes('<meta name="theme-color" content="#24211d">'), 'theme-color metadata is missing');
 assert(index.includes('<link rel="terms-of-service" href="https://amyc.us/terms">'), 'terms metadata is missing');
 assert(index.includes('href="https://amyc.us/terms" style="color:inherit;text-decoration:none">T&amp;Cs</a>'), 'quiet T&Cs footer link is missing');
 assert(terms.includes('<meta http-equiv="refresh" content="0; url=https://amyc.us/terms">'), 'terms.html must redirect to the single data terms page');
-assert(sharedThemeMatches.length === sharedThemeAssets.size, 'shared theme asset set must contain exactly seven pinned assets');
-assert(allSharedThemeMatches.length === sharedThemeAssets.size, 'unexpected shared theme asset reference remains');
+assert(sharedThemeMatches.length === sharedThemeAssets.size, 'shared theme asset set must contain exactly seven hosted assets');
+assert(allSharedThemeMatches.length === sharedThemeAssets.size, 'shared theme must load only from https://aimesy.github.io/themes/src/');
 assert(
-  sharedThemeAssets.size === new Set(sharedThemeMatches.map((match) => match[2])).size
-    && [...sharedThemeAssets].every((asset) => sharedThemeMatches.some((match) => match[2] === asset)),
+  sharedThemeAssets.size === new Set(sharedThemeMatches.map((match) => match[1])).size
+    && [...sharedThemeAssets].every((asset) => sharedThemeMatches.some((match) => match[1] === asset)),
   'shared theme asset set is incomplete or duplicated',
 );
-assert(new Set(sharedThemeMatches.map((match) => match[1])).size === 1, 'shared theme assets must use one commit SHA');
-assert(!/aimesy\/themes(?:\/|@(master|main|latest)\/)/i.test(index), 'mutable or unversioned shared theme reference remains');
+assert(![index, terms].some((page) => /cdn\.jsdelivr\.net\/gh\/aimesy\/themes/i.test(page)), 'commit-pinned jsDelivr shared theme reference remains');
 assert(index.includes('/src/font-system.css') && index.includes('/src/font-system.js'), 'shared font controls must mirror SFSC');
 assert((index.match(/\bdata-theme-toggle\b/g) || []).length === 1, 'viewer must contain exactly one theme toggle');
 assert((index.match(/\bamyc-theme-bar\b/g) || []).length === 1, 'viewer must contain exactly one shared theme bar');
