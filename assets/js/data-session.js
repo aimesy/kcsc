@@ -73,6 +73,7 @@ function turnstileReady(timeoutMs = 20000) {
 // The overlay that holds the widget when Cloudflare (or the Worker) wants it
 // seen. Built here so no page needs markup or styles for it.
 let overlay = null;
+let widgetSlot = null;
 function checkBox() {
   if (overlay) return overlay;
   overlay = document.createElement("div");
@@ -92,7 +93,7 @@ function checkBox() {
   const slot = document.createElement("div");
   card.append(slot);
   overlay.append(card);
-  overlay.slot = slot;
+  widgetSlot = slot;
   document.body.append(overlay);
   return overlay;
 }
@@ -116,7 +117,7 @@ export function createDataSession({ root }) {
 
   function token(visible) {
     return turnstileReady().then((ts) => new Promise((resolve, reject) => {
-      const box = checkBox();
+      checkBox();
       // A new check replaces any earlier one, which must not wait forever.
       pendingCheck?.(new Error("The human check was restarted."));
       pendingCheck = reject;
@@ -134,7 +135,7 @@ export function createDataSession({ root }) {
         "before-interactive-callback": () => showBox(true),
       };
       if (visible) options.action = VISIBLE_ACTION;
-      widgetId = ts.render(box.slot, options);
+      widgetId = ts.render(widgetSlot, options);
       if (visible) showBox(true);
     }));
   }
@@ -224,5 +225,34 @@ export function createDataSession({ root }) {
     return check(res, url);
   }
 
-  return { root, owns, ensure, renew, check, fetch: sessionFetch };
+  // Links that open one of this Worker's documents in a new tab. A plain
+  // click is checked first with a HEAD request, which counts the document
+  // and shows the check when one is owed, and the tab opens after it; a
+  // refusal goes to onRefusal instead of a tab with the Worker's plain text.
+  // Clicks with a modifier key keep the browser's own behaviour.
+  function guardLinks({ match = owns, onRefusal = (err) => window.alert(err.message) } = {}) {
+    document.addEventListener("click", async (event) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const a = event.target?.closest?.("a[href]");
+      if (!a || a.hasAttribute("download") || !match(a.href)) return;
+      event.preventDefault();
+      const href = a.href;
+      const blank = a.target === "_blank";
+      // Opened now, while the click still counts as the reader's; filled in
+      // once the check is done.
+      const tab = blank ? window.open("about:blank", "_blank") : null;
+      if (tab) tab.opener = null;
+      try {
+        await sessionFetch(href, { method: "HEAD" });
+        if (tab) tab.location.replace(href);
+        else if (blank) window.open(href, "_blank", "noopener");
+        else location.assign(href);
+      } catch (err) {
+        tab?.close();
+        onRefusal(err);
+      }
+    });
+  }
+
+  return { root, owns, ensure, renew, check, fetch: sessionFetch, guardLinks };
 }
