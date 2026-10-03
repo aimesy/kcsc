@@ -30,7 +30,7 @@ head_sampling_rate = 1
 ALLOWED_ORIGINS = "https://kcsc.amyc.us https://amyc.us"
 # "true" refuses data requests that carry no session from the Turnstile check;
 # anything else serves them and only reports the state in X-KCSC-Session.
-REQUIRE_SESSION = "false"
+REQUIRE_SESSION = "true"
 # The browser check and document limits (worker/gate.js, the same file in
 # every data Worker; TURNSTILE-SPEC.md). Every number is here; gate.js has
 # the same values as defaults. A "document" is what release.js documentKey()
