@@ -105,9 +105,11 @@ objects, and its largest file is `data/calendar.parquet` (91,914,420 bytes on
 
 The Worker has two entrypoints. The default one is uncached: it answers CORS
 preflights, refuses (403) any request whose `Origin`, or failing that
-`Referer`, is not listed in `ALLOWED_ORIGINS` in `worker/wrangler.toml` (only
-`https://kcsc.amyc.us`, since `https://aimesy.github.io/kcsc/` redirects
-there), and limits each IP address with the Workers Rate Limiting binding (300
+`Referer`, is not listed in `ALLOWED_ORIGINS` in `worker/wrangler.toml`: the
+viewer at `https://kcsc.amyc.us` (`https://aimesy.github.io/kcsc/` redirects
+there) and the home page at `https://amyc.us`, whose `assets/projects.js` in
+`aimesy/me` reads `data/manifest.json` for its live figures. It also limits
+each IP address with the Workers Rate Limiting binding (300
 requests a minute). Over the limit it answers 429 with `Retry-After`. It then
 sends the cached `Release` entrypoint a fresh request built from the path and
 `Range` alone. `Release` fetches the file from GitHub with the token and

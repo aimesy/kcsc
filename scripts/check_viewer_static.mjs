@@ -74,7 +74,7 @@ const workerSource = read('worker/release.js');
 const wrangler = read('worker/wrangler.toml');
 assert(workerSource.includes('export const REPO = "aimesy/kcsc-data";') && workerSource.includes('export const BRANCH = "master";'), 'data Worker must serve aimesy/kcsc-data at master');
 assert(wrangler.includes('routes = [{ pattern = "kcsc-data.amyc.us", custom_domain = true }]'), 'data Worker must run on kcsc-data.amyc.us');
-assert(/^ALLOWED_ORIGINS = "https:\/\/kcsc\.amyc\.us"$/m.test(wrangler), 'data Worker must allow only the viewer origin https://kcsc.amyc.us');
+assert(/^ALLOWED_ORIGINS = "https:\/\/kcsc\.amyc\.us https:\/\/amyc\.us"$/m.test(wrangler), 'data Worker must allow only the viewer (https://kcsc.amyc.us) and the home page (https://amyc.us)');
 assert(/\[exports\.default\.cache\]\s+enabled = false/.test(wrangler) && /\[exports\.Release\.cache\]\s+enabled = true/.test(wrangler), 'data Worker gateway must stay uncached and Release cached');
 assert(app.includes("setAttribute('aria-expanded'"), 'scope button must update aria-expanded');
 assert(app.includes('createKcscDataClient'), 'unified KCSC data client is missing');

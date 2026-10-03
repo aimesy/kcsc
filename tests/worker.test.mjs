@@ -11,6 +11,7 @@ import { createDirectoryClient } from "../assets/js/kcsc-directory.js";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const SITE = "https://kcsc.amyc.us";
+const HOME = "https://amyc.us"; // aimesy/me assets/projects.js reads data/manifest.json
 const BASE = "https://kcsc-data.amyc.us";
 const RAW = "https://raw.githubusercontent.com/aimesy/kcsc-data";
 
@@ -20,7 +21,7 @@ function limiter(allow = true) {
 }
 
 function env(extra = {}) {
-  return { ALLOWED_ORIGINS: "https://kcsc.amyc.us", RATE_LIMITER: limiter(), ...extra };
+  return { ALLOWED_ORIGINS: "https://kcsc.amyc.us https://amyc.us", RATE_LIMITER: limiter(), ...extra };
 }
 
 // Gateway with a stub Release entrypoint that records what it was sent.
@@ -89,6 +90,7 @@ const LIVE_PATHS = [
 // Unknown or missing origin: 403, and the Release entrypoint is never called.
 {
   for (const headers of [{}, { Origin: "https://evil.example" }, { Origin: "null" }, { Origin: "https://aimesy.github.io" },
+    { Origin: "https://www.amyc.us" }, { Origin: "http://kcsc.amyc.us" }, { Origin: "https://kcsc.amyc.us.evil.example" },
     { Referer: "https://evil.example/kcsc/" }, { Origin: "https://evil.example", Referer: `${SITE}/` }]) {
     const { res, sent } = await gateway("/master/data/manifest.json", { headers });
     assert.equal(res.status, 403, JSON.stringify(headers));
@@ -112,6 +114,12 @@ const LIVE_PATHS = [
   const viaReferer = await gateway("/master/archive/cases/081073617SEA.json", { headers: { Referer: `${SITE}/#case=081073617SEA` } });
   assert.equal(viaReferer.res.status, 200);
   assert.equal(viaReferer.res.headers.get("Access-Control-Allow-Origin"), SITE);
+
+  // The home page's live figures: data/manifest.json with its cache buster.
+  const home = await gateway(`/master/data/manifest.json?v=${Date.now()}`, { headers: { Origin: HOME } });
+  assert.equal(home.res.status, 200);
+  assert.equal(home.res.headers.get("Access-Control-Allow-Origin"), HOME);
+  assert.equal(home.sent[0].url, `${BASE}/master/data/manifest.json`);
 
   const kept = await gateway("/master/data/cases.parquet", { headers: { Origin: SITE }, reply: () => new Response("x", { headers: { Vary: "Accept-Encoding" } }) });
   assert.equal(kept.res.headers.get("Vary"), "Accept-Encoding, Origin");
@@ -295,7 +303,7 @@ const LIVE_PATHS = [
   assert.equal(remote, `${BASE}/master/`, "the viewer must read kcsc-data through the Worker at master");
   const wrangler = readFileSync(new URL("../worker/wrangler.toml", import.meta.url), "utf8");
   const origins = /^ALLOWED_ORIGINS = "([^"]*)"$/m.exec(wrangler)?.[1].split(/\s+/) || [];
-  assert.ok(origins.includes(SITE), "wrangler.toml must allow the viewer's origin");
+  assert.deepEqual(origins, [SITE, HOME], "wrangler.toml must allow the viewer and the home page, and nothing else");
 
   const tables = Object.fromEntries(["cases", "docket_entries", "parties", "attorneys", "representation", "calendar", "payments"]
     .map((name) => [name, { path: `data/${name}.parquet`, rows: name === "cases" ? 1 : 0, size_bytes: 4 }]));

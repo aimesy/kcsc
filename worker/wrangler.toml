@@ -15,10 +15,12 @@ routes = [{ pattern = "kcsc-data.amyc.us", custom_domain = true }]
 
 [vars]
 # Pages allowed to read the data, matched against Origin, or else the origin
-# of Referer. Separate with spaces. https://aimesy.github.io/kcsc/ redirects
-# to kcsc.amyc.us, so the viewer never runs on aimesy.github.io; add that
-# origin only if the custom domain is removed.
-ALLOWED_ORIGINS = "https://kcsc.amyc.us"
+# of Referer. Separate with spaces. kcsc.amyc.us is the viewer; amyc.us is the
+# home page (aimesy/me assets/projects.js), which reads data/manifest.json for
+# its live figures. https://aimesy.github.io/kcsc/ redirects to kcsc.amyc.us,
+# so the viewer never runs on aimesy.github.io; add that origin only if the
+# custom domain is removed.
+ALLOWED_ORIGINS = "https://kcsc.amyc.us https://amyc.us"
 
 # Requests per IP address per period. period must be 10 or 60; if it changes,
 # change RETRY_AFTER_SECONDS in release.js to match. namespace_id must be
