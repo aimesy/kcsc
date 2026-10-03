@@ -83,6 +83,11 @@ of `aimesy/kcsc-data` and nothing else, because a token cannot be given to the
 browser. Its URLs mirror `raw.githubusercontent.com`, and the viewer's
 `REMOTE_DATA_BASE` is `https://kcsc-data.amyc.us/master/`:
 
+The viewer's Bulk access control opens an email draft to `me@amyc.us` rather
+than linking visitors to the private data repository. The bug reporter still
+uses the public `aimesy/kcsc` issue tracker. Keep private data repository URLs
+out of public controls; `scripts/check_viewer_static.mjs` checks this boundary.
+
 | Path | Answer |
 |---|---|
 | `/master/<path>` | that file at the head of `master`, cached for 60 seconds |
