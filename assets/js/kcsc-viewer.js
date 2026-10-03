@@ -21,10 +21,13 @@ import {
   statisticsCoveragePercent,
   statisticsSegment,
 } from './kcsc-statistics.js';
+import { createDataSession } from './data-session.js';
 
 const DUCKDB_ESM_URL = 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev45.0/+esm';
 // aimesy/kcsc-data is private; the data Worker in worker/ serves it (README "Data Worker").
 const REMOTE_DATA_BASE = 'https://kcsc-data.amyc.us/master/';
+// The Worker's browser check: a session cookie from a passed Turnstile check.
+const dataSession = createDataSession({ root: 'https://kcsc-data.amyc.us/' });
 const CASE_SEARCH_RESULT_LIMIT = 300;
 const CASE_SEARCH_CONCURRENCY = 6;
 const DIRECTORY_PAGE_SIZE = 300;
@@ -299,6 +302,7 @@ async function resolveDataBase() {
         base,
         locationHref: location.href,
         timeoutMs: REQUEST_TIMEOUT_MS,
+        session: dataSession,
       });
       const got = await client.manifest();
       state.dataBase = client.base;
@@ -656,6 +660,10 @@ async function loadData() {
   state.scope = requestedScopeFromLocation();
   bindEvents();
   applyScopeUi(state.scope);
+  if (runningOnPublishedSite()) {
+    setStatus('checking browser', 'Checking browser');
+    await dataSession.ensure().catch((err) => console.warn(err));
+  }
   setStatus('loading data', 'reading manifest');
   await resolveDataBase();
   state.calendarRows = [];

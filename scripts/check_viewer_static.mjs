@@ -53,7 +53,7 @@ assert((index.match(/\bdata-theme-toggle\b/g) || []).length === 1, 'viewer must 
 assert((index.match(/\bamyc-theme-bar\b/g) || []).length === 1, 'viewer must contain exactly one shared theme bar');
 assert(index.indexOf('</style>') < index.indexOf('/src/theme.css'), 'shared theme CSS must load after inline viewer CSS');
 assert(index.includes('data-bug-report-repo="aimesy/kcsc"'), 'KCSC bug-report repo is missing');
-assert(index.includes('href="mailto:me@amyc.us?subject=KCSC%20bulk%20access"'), 'KCSC bulk access contact is missing');
+assert(index.includes('href="mailto:db@amyc.us?subject=KCSC%20bulk%20access"'), 'KCSC bulk access contact is missing');
 assert(!/\bhref=["'][^"']*github\.com\/aimesy\/kcsc-data(?:[\/"'?#]|$)/i.test(index), 'public controls must not point to the private KCSC data repository');
 assert(index.includes('id="cs-scope-btn" aria-haspopup="true" aria-controls="cs-scope-menu" aria-expanded="false"'), 'scope button must match SFSC aria controls');
 assert(index.includes('<span id="cs-scope-label">Cases</span><span class="cs-scope-chevron" aria-hidden="true"></span>'), 'scope button must use the CSS chevron');

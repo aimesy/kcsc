@@ -58,10 +58,17 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_KEY }}
           KCSC_DATA_ACCESS: ${{ secrets.KCSC_DATA_ACCESS }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+        # Without TURNSTILE_SECRET_KEY the Worker still deploys, but /session
+        # answers 503, so it must stay at REQUIRE_SESSION = "false".
         run: |
           missing=0
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::error::The CLOUDFLARE_API_KEY secret is empty."; missing=1; fi
           if [ -z "$KCSC_DATA_ACCESS" ]; then echo "::error::The KCSC_DATA_ACCESS secret is empty."; missing=1; fi
+          if [ -z "$TURNSTILE_SECRET_KEY" ]; then
+            if grep -q '^REQUIRE_SESSION = "true"' worker/wrangler.toml; then echo "::error::REQUIRE_SESSION is \"true\" but the TURNSTILE_SECRET_KEY secret is empty, so no reader could start a session."; missing=1
+            else echo "::warning::The TURNSTILE_SECRET_KEY secret is empty: the Worker deploys without sessions (the browser check cannot pass)."; fi
+          fi
           exit "$missing"
       - name: Deploy the Worker with its GitHub token
         if: steps.changed.outputs.deploy == 'true'
@@ -69,14 +76,21 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_KEY }}
           KCSC_DATA_ACCESS: ${{ secrets.KCSC_DATA_ACCESS }}
-        # The token reaches Wrangler in a private temporary file, never on a
-        # command line or in the log, and is uploaded with this version as the
-        # Worker secret KCSC_DATA_TOKEN.
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+        # The secrets reach Wrangler in a private temporary file, never on a
+        # command line or in the log, and are uploaded with this version:
+        # KCSC_DATA_TOKEN, TURNSTILE_SECRET_KEY (when set), and a new random
+        # SESSION_KEY (which ends existing sessions; the viewer quietly starts
+        # new ones).
         run: |
           secrets="$RUNNER_TEMP/worker-secrets.env"
           trap 'rm -f "$secrets"' EXIT
           umask 077
-          printf 'KCSC_DATA_TOKEN=%s\n' "$KCSC_DATA_ACCESS" > "$secrets"
+          {
+            printf 'KCSC_DATA_TOKEN=%s\n' "$KCSC_DATA_ACCESS"
+            if [ -n "$TURNSTILE_SECRET_KEY" ]; then printf 'TURNSTILE_SECRET_KEY=%s\n' "$TURNSTILE_SECRET_KEY"; fi
+            printf 'SESSION_KEY=%s\n' "$(openssl rand -hex 32)"
+          } > "$secrets"
           npx --yes wrangler@4 deploy --secrets-file "$secrets"
       - name: Check the live Worker
         if: steps.changed.outputs.deploy == 'true'
@@ -97,6 +111,8 @@ jobs:
             code=$(get -H "Origin: $site" "$base/ref")
             sha=$(cat "$body" 2>/dev/null || true)
             if [ "$code" = 200 ] && [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then break; fi
+            # REQUIRE_SESSION "true": /ref needs a session; go on at master.
+            if [ "$code" = 401 ] && grep -qi '^x-kcsc-session:' "$head"; then sha=master; break; fi
             if [ "$code" = 403 ] && grep -qi '^cf-mitigated: *challenge' "$head" 2>/dev/null; then
               echo "::warning::Cloudflare challenged this runner (Bot Fight Mode), so the Worker cannot be checked from GitHub. Check it from a browser."
               exit 0
@@ -119,7 +135,16 @@ jobs:
           read -r table shard <<< "$paths"
           code=$(get "$base/master/data/manifest.json")
           if [ "$code" != 403 ]; then echo "::error::$base/master/data/manifest.json answered $code without Origin or Referer; expected 403."; exit 1; fi
+          # A token Turnstile rejects proves the Worker holds the secret (403)
+          # rather than lacking it (503); it starts no session.
+          code=$(get -X POST -H "Origin: $site" -H "Content-Type: text/plain" --data "not-a-token" "$base/session")
+          if [ "$code" = 503 ]; then echo "::warning::$base/session answered 503: sessions are not configured (no TURNSTILE_SECRET_KEY)."
+          elif [ "$code" != 403 ] || ! grep -q '^Human check failed' "$body"; then echo "::error::$base/session answered $code to a bad token: $(head -c 160 "$body" | tr -d '\r\n')"; exit 1; fi
           code=$(get -H "Origin: $site" "$base/$sha/$table")
+          if [ "$code" = 401 ] && grep -qi '^x-kcsc-session:' "$head"; then
+            echo "The Worker serves the open manifest, requires a session for everything else and checks Turnstile, so the tables, shards and case records cannot be checked from here."
+            exit 0
+          fi
           if [ "$code" != 200 ]; then echo "::error::$base/$sha/$table answered $code."; exit 1; fi
           code=$(get -H "Origin: $site" "$base/$sha/$shard")
           case=$(head -n 1 "$body" | node -e 'let s = ""; process.stdin.on("data", (d) => s += d).on("end", () => console.log(JSON.parse(s).case_number || ""))' || true)

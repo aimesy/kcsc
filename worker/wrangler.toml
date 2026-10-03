@@ -13,6 +13,13 @@ workers_dev = false
 preview_urls = false
 routes = [{ pattern = "kcsc-data.amyc.us", custom_domain = true }]
 
+# Workers Logs (free plan: 200,000 events a day, kept 3 days). The gateway
+# logs each data request's kind, session state and limit outcome, never an
+# address.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 [vars]
 # Pages allowed to read the data, matched against Origin, or else the origin
 # of Referer. Separate with spaces. kcsc.amyc.us is the viewer; amyc.us is the
@@ -21,8 +28,50 @@ routes = [{ pattern = "kcsc-data.amyc.us", custom_domain = true }]
 # so the viewer never runs on aimesy.github.io; add that origin only if the
 # custom domain is removed.
 ALLOWED_ORIGINS = "https://kcsc.amyc.us https://amyc.us"
+# "true" refuses data requests that carry no session from the Turnstile check;
+# anything else serves them and only reports the state in X-KCSC-Session.
+REQUIRE_SESSION = "false"
+# The browser check and document limits (worker/gate.js, the same file in
+# every data Worker; TURNSTILE-SPEC.md). Every number is here; gate.js has
+# the same values as defaults. A "document" is what release.js documentKey()
+# names; index files never count. Counts key on the browser ID cookie, the
+# address only backs them up.
+# Sessions and the browser ID cookie, in seconds.
+SESSION_SECONDS = "43200"
+TRUSTED_SESSION_SECONDS = "2592000"
+BROWSER_ID_SECONDS = "34560000"
+# Distinct documents each passed check allows; then a visible check gives
+# the next batch.
+DOCUMENTS_PER_CHECK = "100"
+# Distinct documents per browser per UTC day, and in any WEEKLY_DAYS UTC days.
+DAILY_DOCUMENT_LIMIT = "500"
+WEEKLY_DOCUMENT_LIMIT = "1000"
+WEEKLY_DAYS = "7"
+# Distinct documents per address per UTC day, whatever the browser.
+ADDRESS_DAILY_DOCUMENT_LIMIT = "2000"
+# More than RECHECK_DOCUMENTS_PER_MINUTE distinct documents within
+# RECHECK_WINDOW_SECONDS ends the session; the browser may start a new one,
+# with a visible check, after RECHECK_PAUSE_SECONDS.
+RECHECK_DOCUMENTS_PER_MINUTE = "50"
+RECHECK_WINDOW_SECONDS = "60"
+RECHECK_PAUSE_SECONDS = "600"
+# More new sessions than this from one address in a clock hour get 429 on
+# /session for the rest of the hour; VISIBLE_CHECK_AFTER_TRIPS too fast trips
+# from one address within TRIP_WINDOW_SECONDS make its checks visible.
+MAX_SESSIONS_PER_ADDRESS_PER_HOUR = "30"
+VISIBLE_CHECK_AFTER_TRIPS = "3"
+TRIP_WINDOW_SECONDS = "86400"
+# An idle counter deletes itself after this many seconds.
+BROWSER_RECORD_SECONDS = "691200"
+ADDRESS_RECORD_SECONDS = "172800"
+# Trusted keys: SHA-256 (hex) of each key, each followed by a short label (an
+# initial, never a name or an email), separated by spaces. The same list is
+# in all five data Workers. Make a key with scripts/new-trusted-key in
+# aimesy/mfa; revoke one by deleting its hash and redeploying.
+TRUSTED_KEY_HASHES = ""
 
-# Requests per IP address per period. period must be 10 or 60; if it changes,
+# Requests per address (an IPv4 address or an IPv6 /64) per period, a flood
+# guard for every request. period must be 10 or 60; if it changes,
 # change RETRY_AFTER_SECONDS in release.js to match. namespace_id must be
 # unique in the Cloudflare account (mfa-data uses 1001).
 [[ratelimits]]
@@ -32,6 +81,12 @@ namespace_id = "5272"
   [ratelimits.simple]
   limit = 300
   period = 60
+
+# The document counters (gate.js): one Durable Object for each browser ID
+# and one for each address.
+[[durable_objects.bindings]]
+name = "DAILY_QUOTA"
+class_name = "DailyQuota"
 
 # Workers Caching sits in front of every entrypoint. The default entrypoint
 # (origin check and rate limit) must stay uncached, or a cache hit would skip
@@ -51,5 +106,13 @@ type = "worker"
   [exports.Release.cache]
   enabled = true
 
-# The GitHub token is the secret KCSC_DATA_TOKEN, set by the workflow from the
-# KCSC_DATA_ACCESS Actions secret. It is never written here.
+[exports.DailyQuota]
+type = "durable-object"
+storage = "sqlite"
+
+# Secrets, set by the workflow and never written here: KCSC_DATA_TOKEN (from
+# the KCSC_DATA_ACCESS Actions secret), TURNSTILE_SECRET_KEY (from the
+# TURNSTILE_SECRET_KEY Actions secret) and SESSION_KEY (random on each
+# deploy, which ends existing sessions; the viewer quietly starts a new one).
+# The browser ID cookie must outlive deploys, so gate.js signs it with a key
+# derived from TURNSTILE_SECRET_KEY (or a BROWSER_KEY secret, if one is set).

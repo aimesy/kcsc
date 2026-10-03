@@ -231,6 +231,10 @@ export function createKcscDataClient(options = {}) {
   const base = new URL(normalizeDataBase(options.base || './', locationHref));
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 20000;
+  // The data Worker's browser check (data-session.js), for requests to the
+  // Worker only; each attempt gets its own timeout, so a check the reader
+  // has to click is not cut short.
+  const session = options.session || null;
 
   function url(path) {
     const safePath = safeDataPath(path);
@@ -249,6 +253,18 @@ export function createKcscDataClient(options = {}) {
   }
 
   async function fetchRequest(input, init = {}) {
+    const target = requestUrl(input);
+    if (!session?.owns(target)) return fetchAttempt(target, init);
+    await session.ensure().catch(() => {});
+    let response = await fetchAttempt(target, { ...init, credentials: 'include' });
+    if (response.status === 401) {
+      await session.renew(response);
+      response = await fetchAttempt(target, { ...init, credentials: 'include' });
+    }
+    return session.check(response, target);
+  }
+
+  async function fetchAttempt(input, init = {}) {
     const { kcscTimeoutMs, ...fetchInit } = init;
     const controller = new AbortController();
     const upstreamSignal = fetchInit.signal;

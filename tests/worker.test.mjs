@@ -5,7 +5,8 @@
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { handleGateway, handleRelease, route, DATA_PATH } from "../worker/release.js";
+import { handleGateway, handleRelease, route, DATA_PATH, documentKey, OPEN_PATHS } from "../worker/release.js";
+import { checkGate } from "../worker/gate.contract.mjs";
 import { createKcscDataClient } from "../assets/js/kcsc-data-client.js";
 import { createDirectoryClient } from "../assets/js/kcsc-directory.js";
 
@@ -31,7 +32,7 @@ async function gateway(path, { method = "GET", headers = {}, e = env(), reply } 
     sent.push(req);
     return reply ? reply(req) : new Response("body", { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=60" } });
   };
-  const res = await handleGateway(new Request(`${BASE}${path}`, { method, headers }), e, release);
+  const res = await handleGateway(new Request(`${BASE}${path}`, { method, headers }), e, { release, log: () => {} });
   return { res, sent };
 }
 
@@ -107,7 +108,7 @@ const LIVE_PATHS = [
   assert.equal(sent.length, 1);
   assert.equal(res.headers.get("Access-Control-Allow-Origin"), SITE);
   assert.match(res.headers.get("Vary"), /Origin/);
-  assert.equal(res.headers.get("Access-Control-Expose-Headers"), "Content-Range, Content-Length, Accept-Ranges");
+  assert.equal(res.headers.get("Access-Control-Expose-Headers"), "Content-Range, Content-Length, Accept-Ranges, Retry-After, X-Check, X-Limit, X-KCSC-Session, X-Trusted-Key");
   assert.equal(res.headers.get("X-Robots-Tag"), "noindex");
   assert.equal(await res.text(), "body");
 
@@ -157,7 +158,7 @@ const LIVE_PATHS = [
   assert.equal(sent.length, 0);
   assert.equal(res.headers.get("Retry-After"), "60");
   assert.equal(res.headers.get("Access-Control-Allow-Origin"), SITE);
-  assert.equal(res.headers.get("Access-Control-Expose-Headers"), "Content-Range, Content-Length, Accept-Ranges");
+  assert.equal(res.headers.get("Access-Control-Expose-Headers"), "Content-Range, Content-Length, Accept-Ranges, Retry-After, X-Check, X-Limit, X-KCSC-Session, X-Trusted-Key");
   assert.deepEqual(e.RATE_LIMITER.keys, ["203.0.113.9"]);
 
   const ok = env();
@@ -365,7 +366,7 @@ const LIVE_PATHS = [
   const viewerFetch = (input, init = {}) => handleGateway(
     new Request(String(input), { method: init.method || "GET", headers: { Origin: SITE } }),
     gatewayEnv,
-    (inner) => handleRelease(inner, releaseEnv, github),
+    { release: (inner) => handleRelease(inner, releaseEnv, github), log: () => {} },
   );
 
   const client = createKcscDataClient({ base: remote, locationHref: `${SITE}/`, fetchImpl: viewerFetch });
@@ -389,5 +390,32 @@ const LIVE_PATHS = [
   assert.ok(upstream.every((u) => u.auth === "Bearer t0ken"));
   assert.equal(gatewayEnv.RATE_LIMITER.keys.length, expected.length);
 }
+
+// Documents: each case's own record; everything else is an index file.
+{
+  assert.equal(documentKey(route("/master/archive/cases/081073617SEA.json")), "case:081073617SEA");
+  assert.equal(documentKey(route(`/${SHA}/archive/cases/081073617SEA.json`)), "case:081073617SEA", "one document whatever the ref");
+  for (const index of ["/master/data/manifest.json", "/master/data/docket_entries.parquet", "/master/archive/cases-index/081.ndjson", "/master/archive/case-directory/manifest.json", "/ref"]) {
+    assert.equal(documentKey(route(index)), null, `${index} is an index file`);
+  }
+  assert.deepEqual(OPEN_PATHS, ["/master/data/manifest.json"]);
+}
+
+// The browser check and the document limits (worker/gate.js), through this gateway.
+await checkGate({
+  handle: (path, { method = "GET", headers = {}, body, env: e, counters, fetchImpl, now, log = () => {} }) =>
+    handleGateway(new Request(`${BASE}${path}`, { method, headers, body }), e, {
+      release: async () => new Response("{}", { headers: { "Content-Type": "application/json" } }),
+      counters, fetchImpl, now, log,
+    }),
+  env: (extra = {}) => env({ SESSION_KEY: "test-session-key", TURNSTILE_SECRET_KEY: "test-turnstile-secret", ...extra }),
+  site: SITE,
+  document: (i) => `/master/archive/cases/CASE${i}SEA.json`,
+  slices: false,
+  index: "/master/archive/cases-index/081.ndjson",
+  open: "/master/data/manifest.json",
+  cookiePrefix: "kcsc",
+  sessionHeader: "X-KCSC-Session",
+});
 
 console.log("worker tests passed");

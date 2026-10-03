@@ -83,7 +83,7 @@ of `aimesy/kcsc-data` and nothing else, because a token cannot be given to the
 browser. Its URLs mirror `raw.githubusercontent.com`, and the viewer's
 `REMOTE_DATA_BASE` is `https://kcsc-data.amyc.us/master/`:
 
-The viewer's Bulk access control opens an email draft to `me@amyc.us` rather
+The viewer's Bulk access control opens an email draft to `db@amyc.us` rather
 than linking visitors to the private data repository. The bug reporter still
 uses the public `aimesy/kcsc` issue tracker. Keep private data repository URLs
 out of public controls; `scripts/check_viewer_static.mjs` checks this boundary.
@@ -114,8 +114,34 @@ preflights, refuses (403) any request whose `Origin`, or failing that
 viewer at `https://kcsc.amyc.us` (`https://aimesy.github.io/kcsc/` redirects
 there) and the home page at `https://amyc.us`, whose `assets/projects.js` in
 `aimesy/me` reads `data/manifest.json` for its live figures. It also limits
-each IP address with the Workers Rate Limiting binding (300
-requests a minute). Over the limit it answers 429 with `Retry-After`. It then
+each address (an IPv4 address, or an IPv6 /64) with the Workers Rate Limiting
+binding (300 requests a minute). Over the limit it answers 429 with
+`Retry-After`. Then come the browser check and the document limits in
+`worker/gate.js`, the same file every data Worker carries (canonical copy in
+`aimesy/mfa`):
+
+- The viewer passes Cloudflare Turnstile (`assets/js/data-session.js`),
+  invisibly unless Cloudflare wants a click, and posts the token to `/session`.
+  The Worker answers with a session cookie for 12 hours, bound to the address,
+  and on the first check a browser ID cookie for 400 days. With
+  `REQUIRE_SESSION = "true"` a request without a session gets 401, except the
+  open summary files in `OPEN_PATHS` (`/master/data/manifest.json`, which the
+  home page reads).
+- Documents are each case's own record, `archive/cases/<CASE>.json`
+  (`documentKey` in `worker/release.js`); the manifest, directory, index
+  shards, parquet tables and ranking files never count. A record counts once
+  a UTC day however often it is reopened. Each check allows 100 distinct
+  records, then a visible check gives the next 100; a browser may open 500 a
+  UTC day and 1,000 in any 7 days, an address 2,000 a day.
+  Past those the Worker answers 429 "File limit exceeded. For bulk access,
+  please email db@amyc.us." More than 50 in a minute ends the session and asks
+  for a visible check after 10 minutes. A trusted key (`TRUSTED_KEY_HASHES`,
+  made with `scripts/new-trusted-key.mjs` in `aimesy/mfa`) lifts the document
+  limits for 30 days. Every number is a variable in `worker/wrangler.toml`, and
+  the `DailyQuota` Durable Object keeps the counts; if it cannot be reached,
+  requests go through.
+
+It then
 sends the cached `Release` entrypoint a fresh request built from the path and
 `Range` alone. `Release` fetches the file from GitHub with the token and
 returns it with its own content type, `ETag` and cache headers, and Workers
@@ -130,6 +156,11 @@ Secrets, in this repository's Actions secrets:
 - `KCSC_DATA_ACCESS`: a fine-grained GitHub token with read access to the
   contents of `aimesy/kcsc-data` and nothing else. The workflow stores it as
   the Worker secret `KCSC_DATA_TOKEN`.
+- `TURNSTILE_SECRET_KEY`: the secret key of the Turnstile widget the five
+  amyc.us viewers share; its site key is in `assets/js/data-session.js`. The
+  workflow stores it as the Worker secret of the same name, with a new random
+  `SESSION_KEY` on each deploy. Without it the Worker still deploys, but
+  `/session` answers 503.
 - `CLOUDFLARE_API_KEY`: a Cloudflare API token from the "Edit Cloudflare
   Workers" template, limited to the account and the `amyc.us` zone. The
   workflow hands it to Wrangler as `CLOUDFLARE_API_TOKEN`.

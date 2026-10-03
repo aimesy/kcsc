@@ -1,21 +1,25 @@
 // Logic for the kcsc-data Worker, kept free of imports only Workers have, so
 // tests/worker.test.mjs can run it under Node. index.js wires it up.
-// Adapted from aimesy/mfa's worker/release.js.
+// Adapted from aimesy/mfa's worker/release.js; gate.js (the same file in
+// every data Worker) holds the browser check and the document limits.
 //
 // The data repository aimesy/kcsc-data is private. The viewer reads it
 // through this Worker at https://kcsc-data.amyc.us/, whose URLs mirror
 // raw.githubusercontent.com:
 //   /<ref>/<path>   a file in the repository, at a full commit hash or master
 //   /ref            the commit at master
+//   /session        POST a Turnstile token; answers with a session cookie
 //
 // Two entrypoints:
-//   gateway (default export, never cached): CORS preflight, the origin check
-//     and the rate limit for each IP address, then a clean request to the
-//     Release entrypoint.
+//   gateway (default export, never cached): CORS preflight, the origin check,
+//     the flood guard for each address, the session check and the document
+//     limits (gate.js), then a clean request to the Release entrypoint.
 //   release (the Release entrypoint, cached by Workers Caching): fetches the
 //     file from GitHub with the read-only token and returns it with fresh headers.
 // The cache sits in front of each entrypoint, so the gateway must stay
 // uncached or a cache hit would skip the origin check and the rate limit.
+
+import { addressKey, chargeDocument, hasSession, plain, readSession, startSession } from "./gate.js";
 
 export const REPO = "aimesy/kcsc-data";
 export const BRANCH = "master";
@@ -44,11 +48,38 @@ const CONTENT_TYPES = {
 
 const ROBOTS = "User-agent: *\nDisallow: /\n";
 
+// What gate.js needs from this Worker. REQUIRE_SESSION "true" refuses data
+// requests without a session from the Turnstile check; otherwise the state
+// is only reported in X-KCSC-Session.
+export const GATE = {
+  cookiePrefix: "kcsc",
+  sessionHeader: "X-KCSC-Session",
+  viewer: "https://kcsc.amyc.us",
+};
+
+// Open summary files: exact paths that skip the session check (they still
+// need an allowed Origin and pass the flood guard). The amyc.us home page
+// (aimesy/me assets/projects.js LIVE_REPOS) reads data/manifest.json at
+// master; kcsc-data has no LIVE.md.
+export const OPEN_PATHS = ["/master/data/manifest.json"];
+
+// Documents count toward the limits in gate.js: each case's own record,
+// archive/cases/<CASE>.json, is one document (its docket, calendar, parties
+// and raw tabs). Everything else the viewer reads (the manifest, the case
+// directory, the index shards, the parquet tables, the ranking files, /ref)
+// is an index file and never counts. The key names one case whatever the
+// ref.
+export function documentKey(target) {
+  const m = target?.kind === "file" ? /^archive\/cases\/([A-Z0-9]{1,64})\.json$/.exec(target.path) : null;
+  return m ? `case:${m[1]}` : null;
+}
+
 // Which file a path names: { kind: "robots" | "ref" | "file", ref, path },
 // or null for anything the viewer would never ask for.
 export function route(pathname) {
   if (pathname === "/robots.txt") return { kind: "robots" };
   if (pathname === "/ref") return { kind: "ref" };
+  if (pathname === "/session") return { kind: "session" };
   const m = /^\/([^/]+)\/(.+)$/.exec(pathname);
   if (!m) return null;
   const [, ref, path] = m;
@@ -79,7 +110,8 @@ export function callerOrigin(request, origins) {
 function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges, Retry-After, X-Check, X-Limit, X-KCSC-Session, X-Trusted-Key",
   };
 }
 
@@ -89,22 +121,13 @@ function addVary(headers, name) {
   else if (!vary.split(",").some((v) => v.trim().toLowerCase() === name.toLowerCase())) headers.set("Vary", `${vary}, ${name}`);
 }
 
-function plain(status, text, headers = {}) {
-  return new Response(text, {
-    status,
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": NO_STORE,
-      "X-Content-Type-Options": "nosniff",
-      "X-Robots-Tag": "noindex",
-      ...headers,
-    },
-  });
-}
-
 // Default export. `release(request)` calls the cached Release entrypoint
-// (ctx.exports.Release.fetch in index.js; a stub in the tests).
-export async function handleGateway(request, env, release) {
+// (ctx.exports.Release.fetch in index.js; a stub in the tests). `counters`
+// answers the DailyQuota objects for a browser and an address (gate.js
+// durableCounters in index.js; memoryCounters in the tests). `log` gets one
+// line for each data request (Workers Logs): its kind, session state and
+// limit outcome, never an address.
+export async function handleGateway(request, env, { release, counters, fetchImpl = fetch, now = Date.now(), log = (line) => console.log(line) } = {}) {
   const url = new URL(request.url);
   const method = request.method;
 
@@ -123,7 +146,7 @@ export async function handleGateway(request, env, release) {
       status: 204,
       headers: {
         ...corsHeaders(origin),
-        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Range",
         "Access-Control-Max-Age": "86400",
         "Vary": "Origin",
@@ -133,24 +156,43 @@ export async function handleGateway(request, env, release) {
   }
 
   if (!origin) return plain(403, "Forbidden\n");
-  if (method !== "GET" && method !== "HEAD") {
-    return plain(405, "Method not allowed\n", { ...corsHeaders(origin), Allow: "GET, HEAD, OPTIONS", Vary: "Origin" });
+  const cors = { ...corsHeaders(origin), Vary: "Origin" };
+  const target = route(url.pathname);
+  const methods = target?.kind === "session" ? ["POST"] : ["GET", "HEAD"];
+  if (!methods.includes(method)) return plain(405, "Method not allowed\n", { ...cors, Allow: [...methods, "OPTIONS"].join(", ") });
+
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const address = addressKey(ip);
+  if (env.RATE_LIMITER) {
+    const { success } = await env.RATE_LIMITER.limit({ key: address });
+    if (!success) return plain(429, "Too many requests. Try again in a minute.\n", { ...cors, "Retry-After": RETRY_AFTER_SECONDS });
   }
 
-  if (env.RATE_LIMITER) {
-    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-    const { success } = await env.RATE_LIMITER.limit({ key: ip });
-    if (!success) {
-      return plain(429, "Too many requests. Try again in a minute.\n", {
-        ...corsHeaders(origin),
-        "Retry-After": RETRY_AFTER_SECONDS,
-        Vary: "Origin",
-      });
+  if (!target || target.kind === "robots") return plain(404, "Not found\n", cors);
+  const cfg = { ...GATE, origins };
+  const record = (fields) => log(JSON.stringify(fields));
+  if (target.kind === "session") {
+    return startSession(request, env, { ip, address, cors, cfg, counters, fetchImpl, now, log: record });
+  }
+
+  const open = OPEN_PATHS.includes(url.pathname);
+  const docKey = open ? null : documentKey(target);
+  const session = await readSession(request, env, address, now, cfg);
+  if (!open && !hasSession(session) && env.REQUIRE_SESSION === "true") {
+    record({ kind: target.kind, document: Boolean(docKey), session: session.state, outcome: "no session" });
+    return plain(401, `Open the viewer at ${GATE.viewer}; it checks your browser first.\n`, { ...cors, [GATE.sessionHeader]: session.state });
+  }
+
+  let outcome = open ? "open" : "index";
+  if (docKey && counters) {
+    const charged = await chargeDocument(env, { session, address, key: docKey, cors, cfg, counters, now });
+    outcome = charged.outcome;
+    if (charged.refusal) {
+      record({ kind: target.kind, document: true, session: session.state, outcome });
+      return charged.refusal;
     }
   }
-
-  const target = route(url.pathname);
-  if (!target || target.kind === "robots") return plain(404, "Not found\n", { ...corsHeaders(origin), Vary: "Origin" });
+  record({ kind: target.kind, document: Boolean(docKey), session: session.state, outcome });
 
   // A fresh request from the path alone: no query string (the cache key is
   // path plus query) and no headers but Range (Authorization or cookies would
@@ -164,6 +206,7 @@ export async function handleGateway(request, env, release) {
   for (const [k, v] of Object.entries(corsHeaders(origin))) out.headers.set(k, v);
   addVary(out.headers, "Origin");
   out.headers.set("X-Robots-Tag", "noindex");
+  out.headers.set(GATE.sessionHeader, session.state);
   return out;
 }
 
@@ -218,7 +261,7 @@ function fileResponse(res, path, cacheControl, method) {
 export async function handleRelease(request, env, fetchImpl = fetch) {
   const url = new URL(request.url);
   const target = route(url.pathname);
-  if (!target || target.kind === "robots") return plain(404, "Not found\n");
+  if (!target || target.kind === "robots" || target.kind === "session") return plain(404, "Not found\n");
 
   if (target.kind === "ref") {
     let res;
