@@ -23,7 +23,8 @@ import {
 } from './kcsc-statistics.js';
 
 const DUCKDB_ESM_URL = 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev45.0/+esm';
-const REMOTE_DATA_BASE = 'https://raw.githubusercontent.com/aimesy/kcsc-data/master/';
+// aimesy/kcsc-data is private; the data Worker in worker/ serves it (README "Data Worker").
+const REMOTE_DATA_BASE = 'https://kcsc-data.amyc.us/master/';
 const CASE_SEARCH_RESULT_LIMIT = 300;
 const CASE_SEARCH_CONCURRENCY = 6;
 const DIRECTORY_PAGE_SIZE = 300;

@@ -15,7 +15,123 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The data Worker at kcsc-data.amyc.us (worker/, README "Data Worker"),
+  # adapted from aimesy/mfa. The Pages deploy waits for it, so a failed Worker
+  # deploy leaves the current site live. Each deploy empties the Worker's
+  # cache, so a push redeploys it only when worker/ or this workflow changed
+  # since the last successful run of this workflow; a manual run always does.
+  data-worker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Test the data Worker
+        run: node tests/worker.test.mjs
+      - name: Decide whether the Worker changed
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        # Compared with the last successful run, not the previous push: a push
+        # after a failed Worker deploy must deploy the Worker again rather than
+        # publish a viewer that points at a Worker that was never deployed.
+        run: |
+          deploy=true
+          if [ "$EVENT" = push ]; then
+            last=$(gh run list --repo "$REPO" --workflow pages.yml --branch master --status success --limit 1 --json headSha --jq '.[0].headSha // ""' || true)
+            if [ -n "$last" ] && git cat-file -e "$last^{commit}" 2>/dev/null && git diff --quiet "$last" HEAD -- worker/ .github/workflows/pages.yml; then
+              deploy=false
+              echo "worker/ is unchanged since $last, the last successful deploy; the Worker and its cache stay as they are."
+            fi
+          fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+      - name: Check the deploy secrets
+        if: steps.changed.outputs.deploy == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_KEY }}
+          KCSC_DATA_ACCESS: ${{ secrets.KCSC_DATA_ACCESS }}
+        run: |
+          missing=0
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::error::The CLOUDFLARE_API_KEY secret is empty."; missing=1; fi
+          if [ -z "$KCSC_DATA_ACCESS" ]; then echo "::error::The KCSC_DATA_ACCESS secret is empty."; missing=1; fi
+          exit "$missing"
+      - name: Deploy the Worker with its GitHub token
+        if: steps.changed.outputs.deploy == 'true'
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_KEY }}
+          KCSC_DATA_ACCESS: ${{ secrets.KCSC_DATA_ACCESS }}
+        # The token reaches Wrangler in a private temporary file, never on a
+        # command line or in the log, and is uploaded with this version as the
+        # Worker secret KCSC_DATA_TOKEN.
+        run: |
+          secrets="$RUNNER_TEMP/worker-secrets.env"
+          trap 'rm -f "$secrets"' EXIT
+          umask 077
+          printf 'KCSC_DATA_TOKEN=%s\n' "$KCSC_DATA_ACCESS" > "$secrets"
+          npx --yes wrangler@4 deploy --secrets-file "$secrets"
+      - name: Check the live Worker
+        if: steps.changed.outputs.deploy == 'true'
+        # Retries while the custom domain's DNS record and certificate appear on
+        # the first deploy. DNS goes over HTTPS so a lookup cached before the
+        # record existed cannot stall the check. Bot Fight Mode on amyc.us
+        # challenges GitHub's runners before the Worker runs; a challenge means
+        # the Worker cannot be checked from here, so it warns and lets the
+        # deploy continue instead of failing.
+        run: |
+          base=https://kcsc-data.amyc.us
+          site=https://kcsc.amyc.us
+          body="$RUNNER_TEMP/body"
+          head="$RUNNER_TEMP/headers"
+          get() { curl -sS --compressed --max-time 120 --doh-url https://cloudflare-dns.com/dns-query -D "$head" -o "$body" -w '%{http_code}' "$@" || echo 000; }
+          sha=""
+          for i in $(seq 1 36); do
+            code=$(get -H "Origin: $site" "$base/ref")
+            sha=$(cat "$body" 2>/dev/null || true)
+            if [ "$code" = 200 ] && [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then break; fi
+            if [ "$code" = 403 ] && grep -qi '^cf-mitigated: *challenge' "$head" 2>/dev/null; then
+              echo "::warning::Cloudflare challenged this runner (Bot Fight Mode), so the Worker cannot be checked from GitHub. Check it from a browser."
+              exit 0
+            fi
+            echo "attempt $i: /ref answered $code: $(head -c 160 "$body" 2>/dev/null | tr -d '\r\n')"
+            sha=""
+            sleep 10
+          done
+          if [ -z "$sha" ]; then echo "::error::$base/ref did not return a commit."; exit 1; fi
+          echo "master is at $sha"
+          code=$(get -H "Origin: $site" "$base/master/data/manifest.json")
+          if [ "$code" != 200 ]; then echo "::error::$base/master/data/manifest.json answered $code with the site's Origin."; exit 1; fi
+          cp "$body" "$RUNNER_TEMP/manifest.json"
+          paths=$(node -e '
+            const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            if (m.court_id !== "kcsc") throw new Error("manifest court_id is " + m.court_id);
+            const part = [...m.archive.cases_index_parts].sort((a, b) => a.size_bytes - b.size_bytes)[0];
+            console.log(m.tables.payments.path, part.path);
+          ' "$RUNNER_TEMP/manifest.json") || { echo "::error::The manifest the Worker served is not the KCSC data manifest."; exit 1; }
+          read -r table shard <<< "$paths"
+          code=$(get "$base/master/data/manifest.json")
+          if [ "$code" != 403 ]; then echo "::error::$base/master/data/manifest.json answered $code without Origin or Referer; expected 403."; exit 1; fi
+          code=$(get -H "Origin: $site" "$base/$sha/$table")
+          if [ "$code" != 200 ]; then echo "::error::$base/$sha/$table answered $code."; exit 1; fi
+          code=$(get -H "Origin: $site" "$base/$sha/$shard")
+          case=$(head -n 1 "$body" | node -e 'let s = ""; process.stdin.on("data", (d) => s += d).on("end", () => console.log(JSON.parse(s).case_number || ""))' || true)
+          if [ "$code" != 200 ] || [ -z "$case" ]; then echo "::error::$base/$sha/$shard answered $code with no case number."; exit 1; fi
+          code=$(get -H "Origin: $site" "$base/$sha/archive/cases/$case.json")
+          if [ "$code" != 200 ]; then echo "::error::Case record $case answered $code."; exit 1; fi
+          code=$(get -H "Origin: $site" "$base/$sha/data/source-runs.json")
+          if [ "$code" != 404 ]; then echo "::error::data/source-runs.json answered $code; only the viewer's paths may be served."; exit 1; fi
+          echo "The Worker serves the manifest, a table, an index shard and case $case to the site, and refuses other callers and paths."
+
   deploy:
+    needs: data-worker
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

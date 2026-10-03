@@ -9,7 +9,8 @@ KCSC is split into three repositories:
 | `aimesy/kcsc-ops` | Private | Capture runtime, systemd units, sanitized VPS runbooks, and maintenance scripts. |
 
 The product viewer does not commit bulk data. It loads `kcsc-data` by default
-from `https://raw.githubusercontent.com/aimesy/kcsc-data/master/`.
+from `https://kcsc-data.amyc.us/master/`, the data Worker in `worker/`
+(README "Data Worker").
 All public data access flows through `assets/js/kcsc-data-client.js`; operational
 authentication and capture remain exclusively in `aimesy/kcsc-ops`.
 

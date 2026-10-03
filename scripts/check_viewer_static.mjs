@@ -64,7 +64,18 @@ assert(index.includes('id="cs-scope-menu" role="radiogroup" aria-label="Search s
 assert(index.includes('value="parties"') && index.includes('value="counsel"'), 'KCSC entity scopes are missing');
 assert(index.includes('value="statistics"'), 'KCSC statistics scope is missing');
 assert(index.includes('id="cs-statistics-btn"'), 'visible statistics navigation button is missing');
-assert(app.includes("raw.githubusercontent.com/aimesy/kcsc-data/master"), 'viewer is not wired to kcsc-data');
+// aimesy/kcsc-data is private: the viewer reads it only through the data
+// Worker in worker/ (README "Data Worker"), never from GitHub directly.
+assert(app.includes("const REMOTE_DATA_BASE = 'https://kcsc-data.amyc.us/master/';"), 'viewer must read kcsc-data through the kcsc-data Worker');
+for (const name of fs.readdirSync(path.join(root, 'assets/js')).filter((f) => f.endsWith('.js'))) {
+  assert(!/raw\.githubusercontent\.com|api\.github\.com/.test(read(`assets/js/${name}`)), `${name} must not reach the private data repository on GitHub directly`);
+}
+const workerSource = read('worker/release.js');
+const wrangler = read('worker/wrangler.toml');
+assert(workerSource.includes('export const REPO = "aimesy/kcsc-data";') && workerSource.includes('export const BRANCH = "master";'), 'data Worker must serve aimesy/kcsc-data at master');
+assert(wrangler.includes('routes = [{ pattern = "kcsc-data.amyc.us", custom_domain = true }]'), 'data Worker must run on kcsc-data.amyc.us');
+assert(/^ALLOWED_ORIGINS = "https:\/\/kcsc\.amyc\.us"$/m.test(wrangler), 'data Worker must allow only the viewer origin https://kcsc.amyc.us');
+assert(/\[exports\.default\.cache\]\s+enabled = false/.test(wrangler) && /\[exports\.Release\.cache\]\s+enabled = true/.test(wrangler), 'data Worker gateway must stay uncached and Release cached');
 assert(app.includes("setAttribute('aria-expanded'"), 'scope button must update aria-expanded');
 assert(app.includes('createKcscDataClient'), 'unified KCSC data client is missing');
 assert(app.includes('await client.manifest()'), 'validated data manifest load is missing');
