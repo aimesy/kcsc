@@ -21,7 +21,7 @@ import {
   statisticsCoveragePercent,
   statisticsSegment,
 } from './kcsc-statistics.js';
-import { createDataSession } from './data-session.js?v=20261003-2';
+import { createDataSession } from './data-session.js?v=20261003-3';
 
 const DUCKDB_ESM_URL = 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev45.0/+esm';
 // aimesy/kcsc-data is private; the data Worker in worker/ serves it (README "Data Worker").

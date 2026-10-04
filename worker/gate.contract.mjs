@@ -12,6 +12,7 @@
 //     index: path of an index file,
 //     open: an open summary file path, or null,
 //     cookiePrefix, sessionHeader,
+//     cors: false for a Worker the viewer reaches from its own origin (no CORS),
 //   })
 
 import assert from "node:assert/strict";
@@ -102,8 +103,10 @@ export async function checkGate(w) {
     const set = cookies(res);
     assert.match(set[B].line, new RegExp(`^${B}=b1\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+; Max-Age=34560000; Path=/; Secure; HttpOnly; SameSite=Lax$`));
     assert.match(set[S].line, new RegExp(`^${S}=s2\\.\\d+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.0\\.[A-Za-z0-9_-]+; Max-Age=43200; Path=/; Secure; HttpOnly; SameSite=Lax$`));
-    assert.equal(res.headers.get("Access-Control-Allow-Origin"), w.site);
-    assert.equal(res.headers.get("Access-Control-Allow-Credentials"), "true");
+    if (w.cors !== false) {
+      assert.equal(res.headers.get("Access-Control-Allow-Origin"), w.site);
+      assert.equal(res.headers.get("Access-Control-Allow-Credentials"), "true");
+    }
     assert.equal(res.headers.get(H), "ok");
 
     // The same browser keeps its ID on its next check.
@@ -148,7 +151,7 @@ export async function checkGate(w) {
     const none = await b.get(w.index);
     assert.equal(none.status, 401);
     assert.equal(none.headers.get(H), "missing");
-    assert.equal(none.headers.get("Access-Control-Allow-Credentials"), "true");
+    if (w.cors !== false) assert.equal(none.headers.get("Access-Control-Allow-Credentials"), "true");
     assert.equal((await b.get(w.document(1))).status, 401);
     await b.session();
     const ok = await b.get(w.index);
@@ -220,7 +223,7 @@ export async function checkGate(w) {
     assert.equal(await over.text(), FILE_LIMIT_MESSAGE);
     assert.equal(over.headers.get("X-Limit"), "files");
     assert.equal(over.headers.get("Retry-After"), String(12 * 3600), "until midnight UTC");
-    assert.equal(over.headers.get("Access-Control-Allow-Origin"), w.site);
+    if (w.cors !== false) assert.equal(over.headers.get("Access-Control-Allow-Origin"), w.site);
     await b.session({ action: VISIBLE_ACTION });
     assert.equal((await b.get(w.document(5))).status, 429, "a new check does not reset the day");
     assert.equal((await b.get(w.document(1))).status, 200, "documents already opened today still open");

@@ -35,6 +35,20 @@ export class DataRefusal extends Error {
 
 let pendingKey = takeTrustedKey();
 
+// The browser's own fetch, kept before installFetchGuard (if a page uses it)
+// replaces window.fetch, so the check itself never goes through the guard.
+const nativeFetch = typeof window !== "undefined" && typeof window.fetch === "function"
+  ? window.fetch.bind(window)
+  : (...args) => fetch(...args);
+
+// One Turnstile check at a time on the page, whichever Worker asked for it.
+let checkChain = Promise.resolve();
+function oneCheckAtATime(run) {
+  const next = checkChain.then(run, run);
+  checkChain = next.catch(() => {});
+  return next;
+}
+
 function takeTrustedKey() {
   if (typeof location === "undefined" || !location.hash) return "";
   const m = /(^#|&)key=([A-Za-z0-9_-]{32,128})(?=&|$)/.exec(location.hash);
@@ -105,7 +119,11 @@ function showBox(on) {
   box.setAttribute("aria-hidden", on ? "false" : "true");
 }
 
-export function createDataSession({ root }) {
+// root: the Worker's origin with a trailing slash; its /session takes the
+// token. match(url), if given, narrows which of its URLs need the session.
+// onCheck(true | false) is told when a check starts and ends, for a page's
+// own "Checking browser" line.
+export function createDataSession({ root, match = null, onCheck = null }) {
   let sessionPromise = null;
   let refreshing = null;
   let widgetId = null;
@@ -113,10 +131,13 @@ export function createDataSession({ root }) {
   let failedChecks = 0;
   let checkVisible = false;
 
-  const owns = (url) => String(url).startsWith(root);
+  const owns = (url) => {
+    const u = String(url);
+    return u.startsWith(root) && u !== `${root}session` && (!match || match(u));
+  };
 
   function token(visible) {
-    return turnstileReady().then((ts) => new Promise((resolve, reject) => {
+    return oneCheckAtATime(() => turnstileReady().then((ts) => new Promise((resolve, reject) => {
       checkBox();
       // A new check replaces any earlier one, which must not wait forever.
       pendingCheck?.(new Error("The human check was restarted."));
@@ -137,7 +158,7 @@ export function createDataSession({ root }) {
       if (visible) options.action = VISIBLE_ACTION;
       widgetId = ts.render(widgetSlot, options);
       if (visible) showBox(true);
-    }));
+    })));
   }
 
   async function refusal(res, fallback) {
@@ -149,7 +170,7 @@ export function createDataSession({ root }) {
     if (failedChecks >= MAX_CHECKS) return Promise.reject(new Error(CHECK_REFUSED));
     const attempt = async (visible) => {
       const t = await token(visible);
-      const res = await fetch(`${root}session`, {
+      const res = await nativeFetch(`${root}session`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "text/plain" },
@@ -168,13 +189,14 @@ export function createDataSession({ root }) {
       if (res.headers.get("X-Check") === "visible") checkVisible = true;
       throw await refusal(res, `HTTP ${res.status} starting a session`);
     };
+    onCheck?.(true);
     return attempt(checkVisible).catch((err) => {
       // A limit is the Worker's answer, not a failed check.
       if (err instanceof DataRefusal && !/^Human check failed/.test(err.message)) throw err;
       failedChecks += 1;
       console.warn("human check", err);
       throw failedChecks >= MAX_CHECKS ? new Error(CHECK_REFUSED) : err;
-    });
+    }).finally(() => onCheck?.(false));
   }
 
   // The session for this Worker; one check at a time, however many requests
@@ -214,7 +236,7 @@ export function createDataSession({ root }) {
   // fetch() for this Worker's files: with the session cookie, and once more
   // after a new check when the Worker asks for one. `raw` performs one
   // request (a viewer's own fetch with its timeout, for example).
-  async function sessionFetch(url, init = {}, raw = (u, i) => fetch(u, i)) {
+  async function sessionFetch(url, init = {}, raw = nativeFetch) {
     if (!owns(url)) return raw(url, init);
     await ensure().catch(() => {});
     let res = await raw(url, { ...init, credentials: "include" });
@@ -255,4 +277,24 @@ export function createDataSession({ root }) {
   }
 
   return { root, owns, ensure, renew, check, fetch: sessionFetch, guardLinks };
+}
+
+// For a page with many fetch() calls (sfsc): every fetch to a URL one of the
+// sessions owns goes through that session's fetch; anything else is the
+// browser's own fetch, unchanged.
+export function installFetchGuard(sessions) {
+  window.fetch = function guardedFetch(input, init) {
+    let url;
+    try {
+      url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url, location.href).href;
+    } catch {
+      return nativeFetch(input, init);
+    }
+    const session = sessions.find((s) => s.owns(url));
+    if (!session) return nativeFetch(input, init);
+    if (typeof input !== "string" && !(input instanceof URL)) {
+      init = { method: input.method, headers: input.headers, cache: input.cache, signal: input.signal, ...(init || {}) };
+    }
+    return session.fetch(url, init || {});
+  };
 }
