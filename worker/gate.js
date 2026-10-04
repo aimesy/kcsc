@@ -62,8 +62,8 @@ function nextBatchMessage(perCheck) {
   return `Pass the check again to open the next ${perCheck} files.\n`;
 }
 
-// The Turnstile action the viewer sets when it shows the widget (appearance
-// "always"); a check the Worker asked to be visible must carry it.
+// The action identifies the viewer's displayed recheck flow. Managed
+// Turnstile can still solve it automatically; it does not prove a click.
 export const VISIBLE_ACTION = "visible";
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const NO_STORE = "no-store";
@@ -277,30 +277,16 @@ export async function startSession(request, env, { ip, address, cors, cfg, count
   } catch (err) {
     console.error("address counter unavailable", err);
   }
-  if (!gate.ok) {
-    log({ kind: "session", outcome: "address sessions" });
-    const minutes = Math.max(1, Math.ceil(gate.retryAfter / 60));
-    return plain(429, `Too many checks from this address. Try again in ${minutes} minutes.\n`, { ...cors, "Retry-After": String(gate.retryAfter), "X-Limit": "sessions" });
-  }
 
   // The browser: paused after going too fast, or owed a visible check.
   let bid = await readBrowserId(request, env, cfg);
   let status = { pausedUntil: 0, visible: false, trust: null };
   if (bid) {
     try {
-      status = await counters.browser(bid).status({ now });
+      status = await counters.browser(bid).status({ now, limits: L });
     } catch (err) {
       console.error("browser counter unavailable", err);
     }
-  }
-  if (status.pausedUntil > now) {
-    log({ kind: "session", outcome: "paused" });
-    return plain(429, tooFastMessage(L.RECHECK_PAUSE_SECONDS), {
-      ...cors,
-      "Retry-After": String(Math.ceil((status.pausedUntil - now) / 1000)),
-      "X-Check": "visible",
-      "X-Limit": "fast",
-    });
   }
 
   const check = await verifyTurnstile(token, ip, env, cfg, fetchImpl);
@@ -309,10 +295,6 @@ export async function startSession(request, env, { ip, address, cors, cfg, count
     return plain(403, `Human check failed: ${check.why}\n`, cors);
   }
   const visible = check.action === VISIBLE_ACTION;
-  if ((gate.visible || status.visible) && !visible) {
-    log({ kind: "session", outcome: "visible check needed" });
-    return plain(401, "Pass the check shown on the page.\n", { ...cors, "X-Check": "visible" });
-  }
 
   // A trusted key, redeemed now or remembered by this browser.
   const hashes = trustedHashes(env);
@@ -332,6 +314,29 @@ export async function startSession(request, env, { ip, address, cors, cfg, count
     trustedUntil = Math.min(status.trust.until, now + L.TRUSTED_SESSION_SECONDS * 1000);
   }
   const trusted = trustedUntil > now;
+  if (!trusted && !gate.ok) {
+    log({ kind: "session", outcome: "address sessions" });
+    const minutes = Math.max(1, Math.ceil(gate.retryAfter / 60));
+    return plain(429, `Too many checks from this address. Try again in ${minutes} minutes.\n`, { ...cors, "Retry-After": String(gate.retryAfter), "X-Limit": "sessions" });
+  }
+  if (!trusted && status.pausedUntil > now) return plain(429, tooFastMessage(L.RECHECK_PAUSE_SECONDS), {
+    ...cors, "Retry-After": String(Math.ceil((status.pausedUntil - now) / 1000)), "X-Check": "visible", "X-Limit": "fast",
+  });
+  if (!trusted && (gate.visible || status.visible) && !visible) return plain(401, "Pass the check shown on the page.\n", { ...cors, "X-Check": "visible" });
+
+  // Admit only a verified token, atomically with the address's hourly count.
+  // Trusted sessions have no document/session admission limits.
+  if (!trusted) {
+    try {
+      const admitted = await counters.address(address).addressSession({ now, visible, limits: L });
+      if (!admitted.ok) {
+        if (admitted.visible) return plain(401, "Pass the check shown on the page.\n", { ...cors, "X-Check": "visible" });
+        return plain(429, "Too many checks from this address. Try again later.\n", { ...cors, "Retry-After": String(admitted.retryAfter), "X-Limit": "sessions" });
+      }
+    } catch (err) {
+      console.error("address counter unavailable", err);
+    }
+  }
 
   const headers = new Headers(cors);
   headers.set("Cache-Control", NO_STORE);
@@ -349,17 +354,31 @@ export async function startSession(request, env, { ip, address, cors, cfg, count
   if (keyRefused) headers.set("X-Trusted-Key", "refused");
 
   try {
-    await counters.address(address).addressSession({ now, limits: L });
-  } catch (err) {
-    console.error("address counter unavailable", err);
-  }
-  try {
-    await counters.browser(bid).browserSession({ now, sid, exp: expMs, visible, trust: redeemed, limits: L });
+    const admitted = await counters.browser(bid).browserSession({ now, sid, exp: expMs, visible, trusted, trust: redeemed, limits: L });
+    if (admitted && !admitted.ok) {
+      if (admitted.why === "paused") return plain(429, tooFastMessage(L.RECHECK_PAUSE_SECONDS), { ...cors, "Retry-After": String(admitted.retryAfter), "X-Limit": "fast", "X-Check": "visible" });
+      return plain(401, "Pass the check shown on the page.\n", { ...cors, "X-Check": "visible" });
+    }
   } catch (err) {
     console.error("browser counter unavailable", err);
   }
   log({ kind: "session", outcome: trusted ? "trusted" : visible ? "visible" : "started" });
   return new Response(null, { status: 204, headers });
+}
+
+// Every protected request, including summary indexes, checks live session
+// state. A spent batch may still browse summaries; a paused or ended session
+// cannot. Unavailable counters retain the specified fail-open behavior.
+export async function checkSessionAccess(env, { session, cors, cfg, counters, now = Date.now() }) {
+  if (!hasSession(session) || !counters) return null;
+  try {
+    const status = await counters.browser(session.bid).status({ now, sid: session.sid, limits: limits(env) });
+    if (!session.trusted && status.pausedUntil > now) return plain(429, tooFastMessage(limits(env).RECHECK_PAUSE_SECONDS), { ...cors, "Retry-After": String(Math.ceil((status.pausedUntil - now) / 1000)), "X-Check": "visible", "X-Limit": "fast", "Set-Cookie": clearSessionCookie(cfg) });
+    if (status.ended) return plain(401, "This session ended. Pass the check again.\n", { ...cors, "X-Check": "visible", [cfg.sessionHeader]: "ended", "Set-Cookie": clearSessionCookie(cfg) });
+  } catch (err) {
+    console.error("browser counter unavailable", err);
+  }
+  return null;
 }
 
 // Charges one document request. Answers { refusal, outcome }: refusal is null
@@ -448,6 +467,8 @@ async function loadMeta(storage, day) {
   }
   meta.days = meta.days || {};
   meta.sessions = meta.sessions || {};
+  // Migrate an existing browser without discarding its current allowance.
+  meta.batch = meta.batch ?? Math.max(0, ...Object.values(meta.sessions).map((s) => s.n || 0));
   meta.win = meta.win || [];
   meta.trips = meta.trips || [];
   return meta;
@@ -528,13 +549,15 @@ export async function storeDoc(storage, { key, day, now, sid, sessionExp, scope,
     }
     for (const [s, v] of Object.entries(meta.sessions)) if (v.exp < now) delete meta.sessions[s];
     const session = meta.sessions[sid] || { n: 0, exp: sessionExp || now };
-    if (session.n >= L.DOCUMENTS_PER_CHECK) {
+    if (meta.batch >= L.DOCUMENTS_PER_CHECK) {
       meta.visible = true;
       meta.sessions[sid] = session;
       await save(storage, meta, now, keep);
       return { ok: false, why: "check" };
     }
     session.n += 1;
+    meta.batch += 1;
+    if (meta.batch >= L.DOCUMENTS_PER_CHECK) meta.visible = true;
     meta.sessions[sid] = session;
     meta.days[day] = today + 1;
   } else {
@@ -558,29 +581,37 @@ export async function storeRefund(storage, { key, day, sid }) {
   await storage.delete(docKey);
   if (meta.days?.[day]) meta.days[day] -= 1;
   if (meta.sessions?.[sid]?.n) meta.sessions[sid].n -= 1;
+  if (meta.batch) meta.batch -= 1;
   await storage.put("m", meta);
 }
 
 // What /session needs to know about a browser.
-export async function storeStatus(storage, { now }) {
+export async function storeStatus(storage, { now, sid, limits: L }) {
   const meta = (await storage.get("m")) || {};
   return {
     pausedUntil: meta.pausedUntil > now ? meta.pausedUntil : 0,
-    visible: Boolean(meta.visible),
+    visible: Boolean(meta.visible) || Boolean(L && (meta.batch ?? Math.max(0, ...Object.values(meta.sessions || {}).map((s) => s.n || 0))) >= L.DOCUMENTS_PER_CHECK),
+    ended: Boolean(sid && meta.sessions?.[sid]?.ended),
     trust: meta.trust && meta.trust.until > now ? meta.trust : null,
   };
 }
 
 // A browser was given a session: register it, clear an owed visible check
 // once one passed, and remember a redeemed key.
-export async function storeBrowserSession(storage, { now, sid, exp, visible, trust, limits: L }) {
+export async function storeBrowserSession(storage, { now, sid, exp, visible, trusted, trust, limits: L }) {
   const meta = await loadMeta(storage, utcDay(now));
   for (const [s, v] of Object.entries(meta.sessions)) if (v.exp < now) delete meta.sessions[s];
+  if (!trusted && meta.pausedUntil > now) return { ok: false, why: "paused", retryAfter: Math.ceil((meta.pausedUntil - now) / 1000) };
+  if (!trusted && (meta.visible || meta.batch >= L.DOCUMENTS_PER_CHECK) && !visible) return { ok: false, why: "check" };
+  // Renewing early keeps the remaining allowance. Retained older cookies are
+  // explicitly ended so they cannot keep serving exempt index requests.
+  for (const s of Object.values(meta.sessions)) s.ended = true;
   meta.sessions[sid] = { n: 0, exp };
-  if (visible) meta.visible = false;
+  if (visible || trusted) { meta.visible = false; meta.batch = 0; }
   if (trust) meta.trust = trust;
   const keep = Math.max(L.BROWSER_RECORD_SECONDS, L.WEEKLY_DAYS * 86400, meta.trust ? Math.ceil((meta.trust.until - now) / 1000) : 0);
   await save(storage, meta, now, keep);
+  return { ok: true };
 }
 
 function hourOf(now) {
@@ -600,7 +631,10 @@ export async function storeSessionGate(storage, { now, limits: L }) {
   return { ok: true, visible: trips.length >= L.VISIBLE_CHECK_AFTER_TRIPS };
 }
 
-export async function storeAddressSession(storage, { now, limits: L }) {
+export async function storeAddressSession(storage, { now, visible, limits: L }) {
+  const gate = await storeSessionGate(storage, { now, limits: L });
+  if (!gate.ok) return gate;
+  if (gate.visible && !visible) return { ok: false, visible: true };
   const meta = await loadMeta(storage, utcDay(now));
   if (meta.hour !== hourOf(now)) {
     meta.hour = hourOf(now);
@@ -608,6 +642,7 @@ export async function storeAddressSession(storage, { now, limits: L }) {
   }
   meta.hourCount += 1;
   await save(storage, meta, now, L.ADDRESS_RECORD_SECONDS);
+  return { ok: true };
 }
 
 export async function storeTrip(storage, { now, limits: L }) {
@@ -654,14 +689,16 @@ export function memoryStorage() {
 
 // Methods a DailyQuota object answers, over one storage.
 export function quotaMethods(storage) {
+  let pending = Promise.resolve();
+  const serial = (fn) => (args) => {
+    const result = pending.then(() => fn(storage, args));
+    pending = result.catch(() => {});
+    return result;
+  };
   return {
-    doc: (args) => storeDoc(storage, args),
-    refund: (args) => storeRefund(storage, args),
-    status: (args) => storeStatus(storage, args),
-    browserSession: (args) => storeBrowserSession(storage, args),
-    addressSession: (args) => storeAddressSession(storage, args),
-    sessionGate: (args) => storeSessionGate(storage, args),
-    trip: (args) => storeTrip(storage, args),
+    doc: serial(storeDoc), refund: serial(storeRefund), status: serial(storeStatus),
+    browserSession: serial(storeBrowserSession), addressSession: serial(storeAddressSession),
+    sessionGate: serial(storeSessionGate), trip: serial(storeTrip),
   };
 }
 
@@ -669,9 +706,10 @@ export function quotaMethods(storage) {
 // per name.
 export function memoryCounters() {
   const stores = new Map();
+  const methods = new Map();
   const get = (name) => {
-    if (!stores.has(name)) stores.set(name, memoryStorage());
-    return quotaMethods(stores.get(name));
+    if (!stores.has(name)) { stores.set(name, memoryStorage()); methods.set(name, quotaMethods(stores.get(name))); }
+    return methods.get(name);
   };
   return { stores, browser: (bid) => get(`b:${bid}`), address: (address) => get(`a:${address}`) };
 }

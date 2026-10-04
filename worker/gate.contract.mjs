@@ -27,8 +27,7 @@ const HOUR = 60 * MINUTE;
 
 export async function checkGate(w) {
   const host = new URL(w.site).hostname;
-  // Turnstile: answers success for the viewer's host, with the action the
-  // widget would carry ("visible" when it was shown).
+  // The action identifies the displayed flow, not proof of interaction.
   const turnstile = (action = "") => {
     const calls = [];
     const fetchImpl = async (url, init) => {
@@ -288,6 +287,8 @@ export async function checkGate(w) {
     assert.equal(b.jar[S], null, "the session cookie is cleared");
     b.jar[S] = old;
     assert.equal((await b.get(w.document(1))).status, 429, "the old session cannot open documents while paused");
+    b.jar[S] = old;
+    assert.equal((await b.get(w.index)).status, 429, "paused cookies cannot read exempt indexes");
     b.jar[S] = null;
     const paused = await b.session({ action: VISIBLE_ACTION });
     assert.equal(paused.status, 429);
@@ -297,6 +298,8 @@ export async function checkGate(w) {
     const ended = await b.get(w.document(1));
     assert.equal(ended.status, 401, "the ended session stays ended");
     assert.equal(ended.headers.get(H), "ended");
+    b.jar[S] = old;
+    assert.equal((await b.get(w.index)).status, 401, "ended cookies cannot read exempt indexes");
     assert.equal((await b.session()).status, 401, "the next check must be visible");
     assert.equal((await b.session({ action: VISIBLE_ACTION })).status, 204);
     assert.equal((await b.get(w.document(5))).status, 200);
@@ -336,6 +339,40 @@ export async function checkGate(w) {
     assert.equal((await fresh.session({ action: VISIBLE_ACTION })).status, 204);
     y.advance(24 * HOUR + 1000);
     assert.equal((await browser(ip2, y).session()).status, 204, "for 24 hours");
+  }
+
+  // An early renewal cannot reset the allowance or keep an older cookie
+  // alive for exempt indexes. Reaching the batch cap itself owes a recheck.
+  {
+    const x = world({ DOCUMENTS_PER_CHECK: "3" });
+    const b = browser("192.0.2.80", x);
+    await b.session();
+    await b.get(w.document(1));
+    await b.get(w.document(2));
+    const old = b.jar[S];
+    assert.equal((await b.session()).status, 204);
+    const renewed = b.jar[S];
+    b.jar[S] = old;
+    assert.equal((await b.get(w.index)).status, 401, "renewal ends old cookies for summaries too");
+    b.jar[S] = renewed;
+    assert.equal((await b.get(w.document(3))).status, 200);
+    assert.equal((await b.get(w.index)).status, 200, "a spent active session may browse summaries");
+    assert.equal((await b.session()).status, 401, "renewing before the next request still owes the recheck");
+    assert.equal((await b.get(w.document(4))).status, 401, "early renewal kept the previous document count");
+    assert.equal((await b.session({ action: VISIBLE_ACTION })).status, 204);
+    assert.equal((await b.get(w.document(4))).status, 200);
+  }
+
+  // Admission races count verified tokens atomically; failed checks never
+  // consume slots. Run local synthetic requests, never load-test production.
+  {
+    const x = world({ MAX_SESSIONS_PER_ADDRESS_PER_HOUR: "3" });
+    const headers = { Origin: w.site, "CF-Connecting-IP": "192.0.2.81" };
+    const failed = await w.handle("/session", { method: "POST", headers, body: "bad", env: x.env(), counters: x.counters, now: x.now(), fetchImpl: async () => Response.json({ success: false }) });
+    assert.equal(failed.status, 403);
+    const responses = await Promise.all(Array.from({ length: 12 }, () => browser("192.0.2.81", x).session()));
+    assert.equal(responses.filter((r) => r.status === 204).length, 3, "only hourly cap valid tokens admitted concurrently");
+    assert.equal(responses.filter((r) => r.status === 429).length, 9);
   }
 
   // Trusted keys: no document limits, 30 days, remembered by the browser
@@ -398,6 +435,18 @@ export async function checkGate(w) {
     assert.equal(fast.status, 429);
     assert.equal(fast.headers.get("X-Limit"), "fast");
     assert.equal((await c.get(w.index)).status, 200, "index files are not paused");
+  }
+
+  // Valid and remembered trusted keys are exempt from ordinary admission.
+  {
+    const key = "trustedAdmission_0123456789abcdefghijklmnop";
+    const hash = await sha256Hex(key);
+    const x = world({ MAX_SESSIONS_PER_ADDRESS_PER_HOUR: "0", TRUSTED_KEY_HASHES: hash });
+    const b = browser("192.0.2.82", x);
+    assert.equal((await b.session()).status, 429);
+    assert.equal((await b.session({ key })).headers.get(H), "trusted");
+    assert.equal((await b.session()).headers.get(H), "trusted");
+    assert.equal((await b.get(w.document(1))).status, 200);
   }
 
   // The counters fail open; the session check does not.

@@ -19,15 +19,17 @@
 // The cache sits in front of each entrypoint, so the gateway must stay
 // uncached or a cache hit would skip the origin check and the rate limit.
 
-import { addressKey, chargeDocument, hasSession, plain, readSession, startSession } from "./gate.js";
+import { addressKey, chargeDocument, checkSessionAccess, hasSession, plain, readSession, startSession } from "./gate.js";
 
 export const REPO = "aimesy/kcsc-data";
 export const BRANCH = "master";
 // Every path the viewer asks for, and nothing else in the repository:
-//   data/manifest.json, its two ranking files, and the three parquet tables
-//     the viewer opens: parties and attorneys (the Parties and Counsel views,
-//     party: and counsel: search) and docket_entries (docket: search). The
-//     manifest also lists cases, calendar, representation and payments, which
+//   data/manifest.json, its two ranking files, and the metadata-only parquet tables
+//     the viewer opens: parties-browse and attorneys-browse (the Parties and Counsel views,
+//     party: and counsel: search). Docket text is available only in metered
+//     individual case records. Legacy entity tables contain raw source rows
+//     and are not served. The manifest also lists cases, calendar,
+//     representation and payments, which
 //     the viewer never reads; they are not served, so the bulk calendar and
 //     raw case rows cannot be copied through the Worker;
 //   archive/case-directory/manifest.json;
@@ -35,7 +37,7 @@ export const BRANCH = "master";
 //     archive/cases-index.ndjson the viewer falls back to;
 //   archive/cases/<CASE>.json, the name kcsc-data-client.js builds (A-Z, 0-9).
 // tests/worker.test.mjs drives the viewer's own data client through this list.
-export const DATA_PATH = /^(?:data\/(?:manifest\.json|(?:parties|attorneys|docket_entries)\.parquet|[a-z0-9-]{1,64}-rankings\.json)|archive\/case-directory\/manifest\.json|archive\/cases-index\/(?:manifest\.json|[A-Za-z0-9_-]{1,64}\.ndjson)|archive\/cases-index\.ndjson|archive\/cases\/[A-Z0-9]{1,64}\.json)$/;
+export const DATA_PATH = /^(?:data\/(?:manifest\.json|(?:parties|attorneys)-browse\.parquet|[a-z0-9-]{1,64}-rankings\.json)|archive\/case-directory\/manifest\.json|archive\/cases-index\/(?:manifest\.json|[A-Za-z0-9_-]{1,64}\.ndjson)|archive\/cases-index\.ndjson|archive\/cases\/[A-Z0-9]{1,64}\.json)$/;
 const SHA = /^[0-9a-f]{40}$/;
 const USER_AGENT = "kcsc-data-worker (+https://github.com/aimesy/kcsc)";
 const RETRY_AFTER_SECONDS = "60"; // the period of the RATE_LIMITER binding in wrangler.toml
@@ -187,6 +189,11 @@ export async function handleGateway(request, env, { release, counters, fetchImpl
     record({ kind: target.kind, document: Boolean(docKey), session: session.state, outcome: "no session" });
     return plain(401, `Open the viewer at ${GATE.viewer}; it checks your browser first.\n`, { ...cors, [GATE.sessionHeader]: session.state });
   }
+  const sessionRefusal = open ? null : await checkSessionAccess(env, { session, cors, cfg, counters, now });
+  if (sessionRefusal) {
+    record({ kind: target.kind, document: Boolean(docKey), session: session.state, outcome: "session ended" });
+    return sessionRefusal;
+  }
 
   let outcome = open ? "open" : "index";
   if (docKey && counters) {
@@ -212,6 +219,7 @@ export async function handleGateway(request, env, { release, counters, fetchImpl
   addVary(out.headers, "Origin");
   out.headers.set("X-Robots-Tag", "noindex");
   out.headers.set(GATE.sessionHeader, session.state);
+  if (!open) out.headers.set("Cache-Control", "private, no-store");
   return out;
 }
 

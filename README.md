@@ -96,9 +96,8 @@ out of public controls; `scripts/check_viewer_static.mjs` checks this boundary.
 | `/robots.txt` | disallows everything; every answer also carries `X-Robots-Tag: noindex` |
 
 `<path>` must match `DATA_PATH` in `worker/release.js`: `data/manifest.json`,
-the two ranking files it lists, the three parquet tables the viewer opens
-(`parties`, `attorneys` and `docket_entries`; the manifest's `cases`,
-`calendar`, `representation` and `payments` tables are not served),
+the two ranking files it lists, the metadata-only browse tables (`parties-browse` and `attorneys-browse`;
+the canonical parquet tables, including `docket_entries`, are not served),
 `archive/case-directory/manifest.json`, the index shards and manifest under
 `archive/cases-index/` (and the legacy `archive/cases-index.ndjson`), and
 `archive/cases/<CASE>.json`. Anything else in the repository, such as
@@ -183,8 +182,9 @@ The Worker runs on Cloudflare's free plan: 100,000 requests a day for the whole
 account, shared with its other Workers. With caching on, the default entrypoint
 and `Release` each count, so every file the viewer reads costs two requests,
 cached or not. Opening the site reads the manifest and the case directory; a
-search across the archive reads up to 67 index shards; the party, counsel and
-docket views read parquet tables. Past the daily limit Cloudflare answers error
+search across the archive reads up to 67 index shards; the party and
+counsel views read metadata-only parquet tables. Docket text is read through
+individual case records. Past the daily limit Cloudflare answers error
 1027 until midnight UTC; nothing is billed.
 
 To run it locally, put `KCSC_DATA_TOKEN=<token>` in `worker/.dev.vars` (git
@@ -192,3 +192,22 @@ ignores it), run `npx wrangler@4 dev` in `worker/`, and open the viewer with
 `?dataBase=` set to the address it prints followed by `/master/`. Allow the
 viewer's local origin for that session with
 `npx wrangler@4 dev --var "ALLOWED_ORIGINS:http://127.0.0.1:8765"`.
+
+## Protected browse data
+
+The Parties and Counsel scopes read `data/parties-browse.parquet` and
+`data/attorneys-browse.parquet`. These contain names, roles, bar numbers and
+case links; source rows, addresses and contact blocks stay in the private
+canonical tables and in metered per-case records. The canonical publication
+builder in `aimesy/kcsc-ops` regenerates these projections on every refresh.
+The Worker refuses all original parquet paths at master and historical commits.
+Protected gateway responses use `private, no-store`; the inner Release cache
+still caches the source bytes after the session and document checks.
+
+A `docket:` query first filters the compact case metadata. Narrow the other
+filters to 20 cases or fewer, then press the docket-search button to load those
+individual records. Each newly opened case consumes the ordinary document
+allowance. The results describe all cases matching the metadata filters; a
+broader query loads no docket text and asks for narrower filters. This replaces
+the previous archive-wide full-text table scan. Case docket and hearing tabs,
+location suffixes, portal IDs, statistics and capture coverage are preserved.

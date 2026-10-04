@@ -55,12 +55,12 @@ const SHARDS = ("022 081 082 083 084 091 092 093 094 101 102 103 104 111 112 113
   + "220 221 222 223 224 231 232 233 234 241 242 243 244 251 252 253 254 261 262 263 264").split(" ");
 assert.equal(SHARDS.length, 67);
 // The parquet tables the viewer opens (kcsc-viewer.js ensureEntityData and
-// ensureDocketData). The manifest lists four more that are never served.
-const VIEWER_TABLES = ["attorneys", "docket_entries", "parties"];
-const UNSERVED_TABLES = ["calendar", "cases", "payments", "representation"];
+// bounded docket search). Legacy full tables are never served.
+const VIEWER_TABLES = ["attorneys", "parties"];
+const UNSERVED_TABLES = ["attorneys", "calendar", "cases", "docket_entries", "parties", "payments", "representation"];
 const LIVE_PATHS = [
   "data/manifest.json",
-  ...VIEWER_TABLES.map((t) => `data/${t}.parquet`),
+  ...VIEWER_TABLES.map((t) => `data/${t}-browse.parquet`),
   "data/attorney-practice-rankings.json",
   "data/judgment-rankings.json",
   "archive/case-directory/manifest.json",
@@ -94,6 +94,22 @@ const LIVE_PATHS = [
 }
 
 // Unknown or missing origin: 403, and the Release entrypoint is never called.
+// Full source tables are refused at every ref, including HEAD and ranges,
+// before authentication or a cached Release entrypoint can expose their bytes.
+{
+  for (const ref of ["master", SHA]) for (const name of UNSERVED_TABLES) for (const method of ["GET", "HEAD"]) {
+    const path = `/${ref}/data/${name}.parquet`;
+    const denied = await gateway(path, { method, headers: { Origin: SITE, Range: "bytes=0-3" }, e: env({ REQUIRE_SESSION: "true" }) });
+    assert.equal(denied.res.status, 404, path);
+    assert.equal(denied.sent.length, 0, "refused source bytes must never reach the cache");
+    const inner = await release(path, { method, headers: { Range: "bytes=0-3" } });
+    assert.equal(inner.res.status, 404);
+    assert.equal(inner.calls.length, 0, "Release must also refuse source tables independently");
+  }
+  const protectedReply = await gateway(`/${SHA}/archive/cases/081073617SEA.json`, { headers: { Origin: SITE }, reply: () => new Response("{}", { headers: { "Cache-Control": "public, max-age=31536000, immutable" } }) });
+  assert.equal(protectedReply.res.headers.get("Cache-Control"), "private, no-store", "the gateway must recheck protected requests even when source bytes are cached");
+}
+
 {
   for (const headers of [{}, { Origin: "https://evil.example" }, { Origin: "null" }, { Origin: "https://aimesy.github.io" },
     { Origin: "https://www.amyc.us" }, { Origin: "http://kcsc.amyc.us" }, { Origin: "https://kcsc.amyc.us.evil.example" },
@@ -127,17 +143,17 @@ const LIVE_PATHS = [
   assert.equal(home.res.headers.get("Access-Control-Allow-Origin"), HOME);
   assert.equal(home.sent[0].url, `${BASE}/master/data/manifest.json`);
 
-  const kept = await gateway("/master/data/parties.parquet", { headers: { Origin: SITE }, reply: () => new Response("x", { headers: { Vary: "Accept-Encoding" } }) });
+  const kept = await gateway("/master/data/parties-browse.parquet", { headers: { Origin: SITE }, reply: () => new Response("x", { headers: { Vary: "Accept-Encoding" } }) });
   assert.equal(kept.res.headers.get("Vary"), "Accept-Encoding, Origin");
 }
 
 // Query stripping and Range forwarding: the inner request carries the path and Range only.
 {
-  const { sent } = await gateway("/master/data/docket_entries.parquet?cachebust=1&token=x", {
+  const { sent } = await gateway("/master/data/parties-browse.parquet?cachebust=1&token=x", {
     headers: { Origin: SITE, Range: "bytes=0-262143", Cookie: "a=b", Authorization: "Bearer nope", "Cache-Control": "no-cache" },
   });
   const inner = sent[0];
-  assert.equal(inner.url, `${BASE}/master/data/docket_entries.parquet`);
+  assert.equal(inner.url, `${BASE}/master/data/parties-browse.parquet`);
   assert.deepEqual([...inner.headers.keys()], ["range"]);
   assert.equal(inner.headers.get("Range"), "bytes=0-262143");
   assert.equal(inner.method, "GET");
@@ -173,7 +189,7 @@ const LIVE_PATHS = [
 
 // OPTIONS preflight: allowed origin gets Range; unknown origin gets 403.
 {
-  const { res, sent } = await gateway("/master/data/docket_entries.parquet", {
+  const { res, sent } = await gateway("/master/data/parties-browse.parquet", {
     method: "OPTIONS", headers: { Origin: SITE, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "range" },
   });
   assert.equal(res.status, 204);
@@ -182,7 +198,7 @@ const LIVE_PATHS = [
   assert.match(res.headers.get("Access-Control-Allow-Headers"), /Range/);
   assert.match(res.headers.get("Access-Control-Allow-Methods"), /GET/);
   assert.match(res.headers.get("Vary"), /Origin/);
-  const denied = await gateway("/master/data/docket_entries.parquet", { method: "OPTIONS", headers: { Origin: "https://evil.example" } });
+  const denied = await gateway("/master/data/parties-browse.parquet", { method: "OPTIONS", headers: { Origin: "https://evil.example" } });
   assert.equal(denied.res.status, 403);
 }
 
@@ -212,7 +228,7 @@ const LIVE_PATHS = [
   const without = await release("/master/data/manifest.json");
   assert.equal("Authorization" in without.calls[0].init.headers, false);
 
-  const ranged = await release(`/${SHA}/data/docket_entries.parquet`, {
+  const ranged = await release(`/${SHA}/data/parties-browse.parquet`, {
     headers: { Range: "bytes=262144-524287" },
     upstream: () => new Response("part", { status: 206, headers: { "Content-Range": "bytes 262144-524287/91914420", "Content-Length": "262144" } }),
   });
@@ -242,7 +258,7 @@ const LIVE_PATHS = [
   assert.equal(head.res.headers.get("Cache-Control"), "public, max-age=60");
   assert.equal(head.res.headers.get("Content-Type"), "application/x-ndjson");
 
-  assert.equal((await release("/master/data/parties.parquet")).res.headers.get("Content-Type"), "application/vnd.apache.parquet");
+  assert.equal((await release("/master/data/parties-browse.parquet")).res.headers.get("Content-Type"), "application/vnd.apache.parquet");
   assert.equal((await release("/master/data/judgment-rankings.json")).res.headers.get("Content-Type"), "application/json");
 
   const missing = await release("/master/archive/cases/999999999SEA.json", { upstream: () => new Response("404: Not Found", { status: 404 }) });
@@ -359,6 +375,7 @@ const LIVE_PATHS = [
     "archive/cases-index.ndjson": row,
     "archive/cases/081073617SEA.json": '{"case_number":"081073617SEA"}',
     ...Object.fromEntries(Object.values(tables).map((t) => [t.path, "PAR1"])),
+    ...Object.fromEntries(VIEWER_TABLES.map((name) => [`data/${name}-browse.parquet`, "PAR1"])),
   };
   const upstream = [];
   const github = async (url, init) => {
@@ -379,7 +396,7 @@ const LIVE_PATHS = [
   assert.equal((await client.json(manifest.archive.case_directory)).data.constructor, Object);
   for (const part of manifest.archive.cases_index_parts) assert.match((await client.text(part.path)).text, /081073617SEA/);
   assert.match((await client.text("archive/cases-index.ndjson")).text, /081073617SEA/);
-  for (const name of VIEWER_TABLES) assert.equal((await client.buffer(tables[name].path)).bytes.byteLength, 4);
+  for (const name of VIEWER_TABLES) assert.equal((await client.buffer(`data/${name}-browse.parquet`)).bytes.byteLength, 4);
   // A table the manifest lists but the viewer never opens is a 404 through the Worker.
   for (const name of UNSERVED_TABLES) await assert.rejects(client.buffer(tables[name].path), /HTTP 404/, name);
   assert.equal((await client.attorneyRankings(rankingManifest)).data.topics[0].topic, "all_matters");
@@ -390,7 +407,7 @@ const LIVE_PATHS = [
 
   const expected = [
     "data/manifest.json", "archive/case-directory/manifest.json", "archive/cases-index/081.ndjson", "archive/cases-index.ndjson",
-    ...VIEWER_TABLES.map((name) => tables[name].path), "data/attorney-practice-rankings.json", "data/judgment-rankings.json",
+    ...VIEWER_TABLES.map((name) => `data/${name}-browse.parquet`), "data/attorney-practice-rankings.json", "data/judgment-rankings.json",
     "archive/cases/081073617SEA.json", "archive/cases-index/081.ndjson",
   ];
   assert.deepEqual(upstream.map((u) => u.url), expected.map((p) => `${RAW}/master/${p}`));
@@ -403,7 +420,7 @@ const LIVE_PATHS = [
 {
   assert.equal(documentKey(route("/master/archive/cases/081073617SEA.json")), "case:081073617SEA");
   assert.equal(documentKey(route(`/${SHA}/archive/cases/081073617SEA.json`)), "case:081073617SEA", "one document whatever the ref");
-  for (const index of ["/master/data/manifest.json", "/master/data/docket_entries.parquet", "/master/archive/cases-index/081.ndjson", "/master/archive/case-directory/manifest.json", "/ref"]) {
+  for (const index of ["/master/data/manifest.json", "/master/data/parties-browse.parquet", "/master/archive/cases-index/081.ndjson", "/master/archive/case-directory/manifest.json", "/ref"]) {
     assert.equal(documentKey(route(index)), null, `${index} is an index file`);
   }
   assert.deepEqual(OPEN_PATHS, ["/master/data/manifest.json"]);

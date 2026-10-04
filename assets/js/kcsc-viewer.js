@@ -22,6 +22,7 @@ import {
   statisticsSegment,
 } from './kcsc-statistics.js';
 import { createDataSession } from './data-session.js?v=20261003-3';
+import { DOCKET_SEARCH_CASE_LIMIT, scanDocketCandidates, withoutDocketFilters } from './kcsc-docket-search.js';
 
 const DUCKDB_ESM_URL = 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev45.0/+esm';
 // aimesy/kcsc-data is private; the data Worker in worker/ serves it (README "Data Worker").
@@ -81,7 +82,6 @@ const state = {
   directoryGroupRows: new Map(),
   directoryHydratedRows: new Map(),
   cases: [],
-  docketRows: [],
   partyRows: [],
   attorneyRows: [],
   calendarRows: [],
@@ -90,10 +90,7 @@ const state = {
   counselEntities: [],
   entityLoaded: { parties: false, counsel: false },
   entityPromises: new Map(),
-  docketLoaded: false,
-  docketPromise: null,
   nextHearings: new Map(),
-  docketIndex: new Map(),
   partyIndex: new Map(),
   counselIndex: new Map(),
   selectedCaseNumber: '',
@@ -473,18 +470,6 @@ function buildSearchIndexes() {
     state.nextHearings.set(key, row);
   }
 
-  state.docketIndex.clear();
-  for (const row of state.docketRows) {
-    appendIndex(state.docketIndex, row.case_number, [
-      row.description,
-      row.date_filed,
-      row.entry_seq,
-      row.fee,
-      row.source,
-      row.raw,
-    ].map(text).join(' '));
-  }
-
   state.partyIndex.clear();
   for (const row of state.partyRows) {
     appendIndex(state.partyIndex, row.case_number, [
@@ -667,7 +652,6 @@ async function loadData() {
   setStatus('loading data', 'reading manifest');
   await resolveDataBase();
   state.calendarRows = [];
-  state.docketRows = [];
   state.partyRows = [];
   state.attorneyRows = [];
   setStatus('loading directory', 'reading compact case groups');
@@ -699,10 +683,8 @@ async function ensureEntityData(kind) {
   if (state.entityLoaded[kind]) return;
   if (state.entityPromises.has(kind)) return state.entityPromises.get(kind);
   const promise = (async () => {
-    const tables = state.manifest?.tables || {};
     const tableName = kind === 'parties' ? 'parties' : 'attorneys';
-    const path = tables[tableName]?.path;
-    if (!path) throw new Error(`${tableName} table is unavailable`);
+    const path = `data/${tableName}-browse.parquet`;
     setStatus(`loading ${kind}`, `loading ${scopeLabel(kind).toLowerCase()} index`);
     const progress = createLoadProgress({
       phase: `Loading ${scopeLabel(kind).toLowerCase()} index`,
@@ -736,35 +718,6 @@ async function ensureEntityData(kind) {
   });
   state.entityPromises.set(kind, promise);
   return promise;
-}
-
-async function ensureDocketData() {
-  if (state.docketLoaded) return;
-  if (state.docketPromise) return state.docketPromise;
-  state.docketPromise = (async () => {
-    const path = state.manifest?.tables?.docket_entries?.path;
-    if (!path) throw new Error('docket entry table is unavailable');
-    setStatus('loading docket search', 'loading docket text index');
-    const progress = createLoadProgress({
-      phase: 'Loading docket text index',
-      shardsTotal: 1,
-      recordsTotal: tableRowsCount('docket_entries'),
-    });
-    const unsubscribe = mountLoadProgress($('cs-body'), progress, {
-      ariaLabel: 'Docket text index loaded',
-    });
-    try {
-      state.docketRows = await loadEntityParquetRows('docket_entries', path, progress);
-      buildSearchIndexes();
-      state.docketLoaded = true;
-    } finally {
-      unsubscribe();
-    }
-    setStatus('loaded', archiveReadyText());
-  })().finally(() => {
-    state.docketPromise = null;
-  });
-  return state.docketPromise;
 }
 
 function provenanceDataSource() {
@@ -802,7 +755,7 @@ function scopeLabel(scope = state.scope) {
 function scopePlaceholder(scope = state.scope) {
   return {
     cases: 'Search title, cause, status, node, case number, or namespaces',
-    parties: 'Search party names, roles, counsel, address, or case number',
+    parties: 'Search party names, roles, counsel, or case number',
     counsel: 'Search counsel names, bar numbers, represented parties, or case number',
     statistics: '',
   }[scope] || 'Search title, cause, status, node, case number, or namespaces';
@@ -905,6 +858,10 @@ function bindEvents() {
     }
   });
   $('cs-body').addEventListener('click', (event) => {
+    if (event.target.closest?.('[data-docket-search]')) {
+      renderResults({ scanDockets: true });
+      return;
+    }
     const mode = event.target.closest?.('[data-statistics-mode]');
     if (mode) {
       const nextMode = mode.dataset.statisticsMode;
@@ -1112,7 +1069,6 @@ function caseFullSearchText(row) {
     caseSearchText(row),
     state.partyIndex.get(key) || '',
     state.counselIndex.get(key) || '',
-    state.docketIndex.get(key) || '',
   ].map(text).join(' ');
 }
 
@@ -1122,7 +1078,6 @@ function namespaceText(row, field) {
   if (field === 'title') return row.case_title;
   if (field === 'party') return state.partyIndex.get(key) || '';
   if (field === 'counsel') return state.counselIndex.get(key) || '';
-  if (field === 'docket') return state.docketIndex.get(key) || '';
   if (field === 'cause') return row.cause_of_action;
   if (field === 'status') return [row.status, row.status_group || statusGroup(row.status)].map(text).join(' ');
   if (field === 'node') return row.portal_node_id;
@@ -1419,7 +1374,6 @@ async function prepareCaseSearch(filters) {
   const fields = searchNamespaceFields(filters);
   if (fields.has('party')) await ensureEntityData('parties');
   if (fields.has('counsel')) await ensureEntityData('counsel');
-  if (fields.has('docket')) await ensureDocketData();
 }
 
 function caseSearchPrefix(filters) {
@@ -1429,8 +1383,9 @@ function caseSearchPrefix(filters) {
   return /^\d[A-Z0-9]{7,}$/.test(normalized) ? normalized.slice(0, 3) : '';
 }
 
-async function runCaseSearch(filters, searchSeq) {
+async function runCaseSearch(filters, searchSeq, { scanDockets = false } = {}) {
   const current = () => searchSeq === state.searchSeq && state.scope === 'cases';
+  const metadataFilters = withoutDocketFilters(filters);
   try {
     await prepareCaseSearch(filters);
     if (!current()) return;
@@ -1491,7 +1446,7 @@ async function runCaseSearch(filters, searchSeq) {
               const key = normalizeCaseKey(row.case_number);
               if (!key || matches.has(key)) continue;
               if (state.entityCaseFilter && !state.entityCaseFilter.caseNumbers.has(key)) continue;
-              if (caseMatchesFilters(row, filters, true)) matches.set(key, row);
+              if (caseMatchesFilters(row, metadataFilters, true)) matches.set(key, row);
             }
             progress.update({
               bytesLoaded: [...bytesByPath.values()].reduce((sum, value) => sum + value, 0),
@@ -1517,6 +1472,10 @@ async function runCaseSearch(filters, searchSeq) {
     if (errors.length) throw new Error(`Case search was incomplete. ${errors[0]}`);
     const sorted = sortCaseRows([...matches.values()], filters.sort);
     const capped = sorted.length > CASE_SEARCH_RESULT_LIMIT || attemptedSources < sources.length;
+    if (searchNamespaceFields(filters).has('docket')) {
+      await renderDocketSearch(sorted, filters, { scanDockets, current, capped });
+      return;
+    }
     renderCaseResults(sorted.slice(0, CASE_SEARCH_RESULT_LIMIT), {
       capped,
       scanned: recordsLoaded,
@@ -2074,7 +2033,7 @@ function renderStatistics() {
   $('cs-body').innerHTML = `<main class="cs-statistics">${statisticsModebar()}${content}</main>`;
 }
 
-function renderResults() {
+function renderResults(options = {}) {
   if (!state.directory && !state.cases.length) return;
   clearTimeout(state.searchTimer);
   state.caseOpenSeq += 1;
@@ -2099,10 +2058,54 @@ function renderResults() {
     return;
   }
   if (state.directory) {
-    runCaseSearch(filters, searchSeq);
+    runCaseSearch(filters, searchSeq, options);
+    return;
+  }
+  if (searchNamespaceFields(filters).has('docket')) {
+    const current = () => searchSeq === state.searchSeq && state.scope === 'cases';
+    prepareCaseSearch(filters).then(async () => {
+      if (!current()) return;
+      const candidates = sortCaseRows(state.cases.filter((row) => {
+        if (state.entityCaseFilter && !state.entityCaseFilter.caseNumbers.has(normalizeCaseKey(row.case_number))) return false;
+        return caseMatchesFilters(row, withoutDocketFilters(filters), true);
+      }), filters.sort);
+      await renderDocketSearch(candidates, filters, { ...options, current });
+    }).catch((error) => { if (current()) showBodyError(error.message || String(error), 'search'); });
     return;
   }
   renderCaseResults(filteredCases(), { scanned: state.cases.length });
+}
+
+async function renderDocketSearch(candidates, filters, { scanDockets, current, capped = false }) {
+  if (!current()) return;
+  const docketFilters = filters.parsed.filters.filter((filter) => filter.field === 'docket');
+  if (capped || candidates.length > DOCKET_SEARCH_CASE_LIMIT) {
+    setStatus('narrow docket search');
+    $('cs-body').innerHTML = `<div class="cs-hint">Docket text search requires ${DOCKET_SEARCH_CASE_LIMIT} cases or fewer. ${nf.format(candidates.length)}${capped ? '+' : ''} cases match the other filters. Narrow by case number, title, type, or filing dates. No docket records have been loaded.</div>`;
+    return;
+  }
+  if (!candidates.length) {
+    renderCaseResults([], { note: 'No cases match the metadata filters; no docket records loaded.' });
+    return;
+  }
+  if (!scanDockets) {
+    setStatus('docket search ready');
+    $('cs-body').innerHTML = `<div class="cs-hint">${nf.format(candidates.length)} cases match the other filters. Search their docket text by opening each case record; unopened records count toward your file allowance. <button type="button" class="hbtn" data-docket-search>Search docket text in ${nf.format(candidates.length)} cases</button></div>${renderCaseGroups(candidates)}`;
+    return;
+  }
+  const progress = createLoadProgress({ phase: 'Searching individual case dockets', shardsTotal: candidates.length, recordsTotal: candidates.length });
+  const unsubscribe = mountLoadProgress($('cs-body'), progress, { ariaLabel: 'Docket search progress' });
+  try {
+    const result = await scanDocketCandidates(candidates, docketFilters, {
+      loadCase,
+      current,
+      onProgress: ({ scanned }) => progress.update({ shardsLoaded: scanned, recordsLoaded: scanned }),
+    });
+    if (!current() || result.cancelled) return;
+    renderCaseResults(result.matches, { note: `Docket text checked in all ${nf.format(result.scanned)} cases matching the metadata filters.` });
+  } finally {
+    unsubscribe();
+  }
 }
 
 function renderCaseResults(rows, options = {}) {
@@ -2112,7 +2115,7 @@ function renderCaseResults(rows, options = {}) {
   setStatus('loaded', `${nf.format(rows.length)} search results`);
   const count = resultCountHtml(rows.length, state.directory?.case_count || state.cases.length, {
     capped: options.capped,
-    note: options.scanned ? `${nf.format(options.scanned)} compact rows scanned` : '',
+    note: options.note || (options.scanned ? `${nf.format(options.scanned)} compact rows scanned` : ''),
   });
   const body = rows.length ? renderCaseGroups(rows) : '<div class="cs-empty">No matching cases.</div>';
   $('cs-body').innerHTML = `${count}${body}`;

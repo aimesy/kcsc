@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { docketRecordMatches, scanDocketCandidates, withoutDocketFilters } from './kcsc-docket-search.js';
+
+const filters = [{ field: 'docket', value: 'Judgment' }, { field: 'docket', value: '2025-01' }];
+assert.equal(docketRecordMatches({ docket_entries: [{ description: 'JUDGMENT ENTERED', date_filed: '2025-01-02' }] }, filters), true);
+assert.equal(docketRecordMatches({ docket_entries: [{ description: 'Judgment vacated', date_filed: '2026-01-02' }] }, filters), false);
+assert.equal(docketRecordMatches({}, filters), false);
+const parsed = { free: 'contract', filters: [...filters, { field: 'case', value: '251' }] };
+assert.deepEqual(withoutDocketFilters({ parsed, type: 'civil' }), { parsed: { free: 'contract', filters: [{ field: 'case', value: '251' }] }, type: 'civil' });
+assert.equal(parsed.filters.length, 3, 'metadata filtering must not mutate the docket query');
+const rows = Array.from({ length: 21 }, (_, i) => ({ case_number: `CASE${i}SEA` }));
+let calls = 0;
+await assert.rejects(scanDocketCandidates(rows, filters, { loadCase: async () => { calls += 1; return {}; } }), /Narrow the case filters/);
+assert.equal(calls, 0, 'broad search must load no records');
+const result = await scanDocketCandidates(rows.slice(0, 2), filters, { loadCase: async (number) => {
+  calls += 1;
+  return { docket_entries: [{ description: number === 'CASE0SEA' ? 'Judgment' : 'Order', date_filed: '2025-01-02' }] };
+} });
+assert.deepEqual(result.matches, [rows[0]]);
+assert.equal(result.scanned, 2);
+assert.equal(calls, 2);
+let current = true;
+calls = 0;
+const cancelled = await scanDocketCandidates(rows.slice(0, 3), filters, { current: () => current, loadCase: async () => { calls += 1; current = false; return {}; } });
+assert.equal(cancelled.cancelled, true);
+assert.equal(calls, 1, 'superseded searches stop additional requests');
+calls = 0;
+await assert.rejects(scanDocketCandidates(rows.slice(0, 3), filters, { loadCase: async () => { calls += 1; throw new Error('File limit exceeded'); } }), /File limit exceeded/);
+assert.equal(calls, 1, 'a quota refusal stops the scan immediately');
+console.log('docket search tests passed');

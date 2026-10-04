@@ -151,7 +151,7 @@ assert(!app.includes('globalTextSearch'), 'dead global text search flag must not
 assert(!app.includes('has_deferred_documents'), 'viewer must not expose stale deferred document naming');
 assert(!app.includes('document bytes deferred'), 'viewer must not surface stale deferred document wording');
 assert(app.includes('has_document_index_rows'), 'document index row flag is missing');
-assert(app.includes('Search party names, roles, counsel, address, or case number'), 'party search placeholder is stale');
+assert(app.includes('Search party names, roles, counsel, or case number'), 'party search placeholder is stale');
 assert(app.includes('Search counsel names, bar numbers, represented parties, or case number'), 'counsel search placeholder is stale');
 
 if (!process.exitCode) {
