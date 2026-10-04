@@ -24,13 +24,18 @@ import { addressKey, chargeDocument, hasSession, plain, readSession, startSessio
 export const REPO = "aimesy/kcsc-data";
 export const BRANCH = "master";
 // Every path the viewer asks for, and nothing else in the repository:
-//   data/manifest.json, the parquet tables it lists, and its two ranking files;
+//   data/manifest.json, its two ranking files, and the three parquet tables
+//     the viewer opens: parties and attorneys (the Parties and Counsel views,
+//     party: and counsel: search) and docket_entries (docket: search). The
+//     manifest also lists cases, calendar, representation and payments, which
+//     the viewer never reads; they are not served, so the bulk calendar and
+//     raw case rows cannot be copied through the Worker;
 //   archive/case-directory/manifest.json;
 //   archive/cases-index/<prefix>.ndjson, its manifest.json, and the legacy
 //     archive/cases-index.ndjson the viewer falls back to;
 //   archive/cases/<CASE>.json, the name kcsc-data-client.js builds (A-Z, 0-9).
 // tests/worker.test.mjs drives the viewer's own data client through this list.
-export const DATA_PATH = /^(?:data\/(?:manifest\.json|[a-z0-9_]{1,64}\.parquet|[a-z0-9-]{1,64}-rankings\.json)|archive\/case-directory\/manifest\.json|archive\/cases-index\/(?:manifest\.json|[A-Za-z0-9_-]{1,64}\.ndjson)|archive\/cases-index\.ndjson|archive\/cases\/[A-Z0-9]{1,64}\.json)$/;
+export const DATA_PATH = /^(?:data\/(?:manifest\.json|(?:parties|attorneys|docket_entries)\.parquet|[a-z0-9-]{1,64}-rankings\.json)|archive\/case-directory\/manifest\.json|archive\/cases-index\/(?:manifest\.json|[A-Za-z0-9_-]{1,64}\.ndjson)|archive\/cases-index\.ndjson|archive\/cases\/[A-Z0-9]{1,64}\.json)$/;
 const SHA = /^[0-9a-f]{40}$/;
 const USER_AGENT = "kcsc-data-worker (+https://github.com/aimesy/kcsc)";
 const RETRY_AFTER_SECONDS = "60"; // the period of the RATE_LIMITER binding in wrangler.toml

@@ -130,9 +130,12 @@ jobs:
             const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
             if (m.court_id !== "kcsc") throw new Error("manifest court_id is " + m.court_id);
             const part = [...m.archive.cases_index_parts].sort((a, b) => a.size_bytes - b.size_bytes)[0];
-            console.log(m.tables.payments.path, part.path);
+            console.log(m.tables.parties.path, part.path, m.tables.calendar.path);
           ' "$RUNNER_TEMP/manifest.json") || { echo "::error::The manifest the Worker served is not the KCSC data manifest."; exit 1; }
-          read -r table shard <<< "$paths"
+          read -r table shard unserved <<< "$paths"
+          # A table the viewer never opens is outside DATA_PATH: 404 before any session check.
+          code=$(get -H "Origin: $site" "$base/master/$unserved")
+          if [ "$code" != 404 ]; then echo "::error::$unserved answered $code; only the viewer's three parquet tables may be served."; exit 1; fi
           code=$(get "$base/master/data/manifest.json")
           if [ "$code" != 403 ]; then echo "::error::$base/master/data/manifest.json answered $code without Origin or Referer; expected 403."; exit 1; fi
           # A token Turnstile rejects proves the Worker holds the secret (403)

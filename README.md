@@ -96,7 +96,9 @@ out of public controls; `scripts/check_viewer_static.mjs` checks this boundary.
 | `/robots.txt` | disallows everything; every answer also carries `X-Robots-Tag: noindex` |
 
 `<path>` must match `DATA_PATH` in `worker/release.js`: `data/manifest.json`,
-the parquet tables and the two ranking files it lists,
+the two ranking files it lists, the three parquet tables the viewer opens
+(`parties`, `attorneys` and `docket_entries`; the manifest's `cases`,
+`calendar`, `representation` and `payments` tables are not served),
 `archive/case-directory/manifest.json`, the index shards and manifest under
 `archive/cases-index/` (and the legacy `archive/cases-index.ndjson`), and
 `archive/cases/<CASE>.json`. Anything else in the repository, such as
@@ -105,8 +107,8 @@ the parquet tables and the two ranking files it lists,
 2026-10-03 and runs the viewer's own data client through the Worker. If
 `kcsc-data` starts publishing a file under a new name, widen `DATA_PATH` and the
 test together. The viewer reads no release assets, the repository has no LFS
-objects, and its largest file is `data/calendar.parquet` (91,914,420 bytes on
-2026-10-03).
+objects, and its largest file, `data/calendar.parquet` (91,914,420 bytes on
+2026-10-03), is no longer served.
 
 The Worker has two entrypoints. The default one is uncached: it answers CORS
 preflights, refuses (403) any request whose `Origin`, or failing that
