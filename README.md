@@ -178,14 +178,18 @@ for a file the viewer never reads. Bot Fight Mode on `amyc.us` answers GitHub's
 runners with a challenge before the Worker runs; the check then warns that it
 could not reach the Worker, and the Pages deploy goes ahead.
 
-The Worker runs on Cloudflare's free plan: 100,000 requests a day for the whole
-account, shared with its other Workers. With caching on, the default entrypoint
+The account uses Cloudflare Workers Paid as of 2026-10-03. Its Standard plan
+includes 10 million requests and 30 million CPU milliseconds per month across
+the account, with charges above those allowances. With caching on, the default entrypoint
 and `Release` each count, so every file the viewer reads costs two requests,
 cached or not. Opening the site reads the manifest and the case directory; a
 search across the archive reads up to 67 index shards; the party and
 counsel views read metadata-only parquet tables. Docket text is read through
-individual case records. Past the daily limit Cloudflare answers error
-1027 until midnight UTC; nothing is billed.
+individual case records. The isolate memory limit remains 128 MB. The gate's
+Durable Objects have separate monthly allowances of 1 million requests and
+400,000 GB-seconds, plus storage usage. Current allowances and overage rates are
+documented in [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/)
+and [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/).
 
 To run it locally, put `KCSC_DATA_TOKEN=<token>` in `worker/.dev.vars` (git
 ignores it), run `npx wrangler@4 dev` in `worker/`, and open the viewer with
