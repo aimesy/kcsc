@@ -963,19 +963,8 @@ function bindEvents() {
 
     const directoryMore = event.target.closest('[data-directory-more]');
     if (directoryMore) {
-      const key = directoryMore.getAttribute('data-directory-more');
-      const cached = state.directoryHydratedRows.get(key);
-      const rows = cached ? await cached : [];
-      const list = directoryMore.closest('[data-directory-group-body]')?.querySelector('[data-directory-results]');
-      const offset = num(directoryMore.getAttribute('data-offset'));
-      if (!list || !Array.isArray(rows) || offset < 1) return;
-      const next = Math.min(rows.length, offset + DIRECTORY_PAGE_SIZE);
-      list.insertAdjacentHTML('beforeend', rows.slice(offset, next).map(renderCaseRow).join(''));
-      if (next >= rows.length) directoryMore.closest('.cs-directory-more')?.remove();
-      else {
-        directoryMore.setAttribute('data-offset', String(next));
-        directoryMore.textContent = `Show next ${nf.format(Math.min(DIRECTORY_PAGE_SIZE, rows.length - next))}`;
-      }
+      const details = directoryMore.closest('[data-directory-group-key]');
+      if (details) showMoreDirectoryRows(details, directoryMore);
       return;
     }
 
@@ -1280,13 +1269,80 @@ function renderDirectoryBrowse(filters) {
   $('cs-body').innerHTML = `${resultCountHtml(count, state.directory.case_count)}${body || '<div class="cs-empty">No matching case groups.</div>'}`;
 }
 
-function renderDirectoryGroupRows(body, key, rows) {
-  const visible = Math.min(DIRECTORY_PAGE_SIZE, rows.length);
-  const more = visible < rows.length
-    ? `<div class="cs-directory-more"><button type="button" class="hbtn" data-directory-more="${escapeHtml(key)}" data-offset="${visible}">Show next ${nf.format(Math.min(DIRECTORY_PAGE_SIZE, rows.length - visible))}</button></div>`
+function renderDirectoryGroupRows(body, key, pager) {
+  const loaded = pager.rows.length;
+  const total = pager.group.rows;
+  const exhausted = pager.index >= pager.readers.length;
+  const remaining = exhausted ? 0 : Math.max(0, total - loaded);
+  const more = !exhausted
+    ? `<div class="cs-directory-more"><button type="button" class="hbtn" data-directory-more="${escapeHtml(key)}">Show next ${nf.format(Math.min(DIRECTORY_PAGE_SIZE, remaining || DIRECTORY_PAGE_SIZE))}</button> <span class="cs-year-count">${nf.format(loaded)} of ${nf.format(total)} loaded</span></div>`
     : '';
-  body.innerHTML = `<ul class="cs-results" data-directory-results>${rows.slice(0, visible).map(renderCaseRow).join('')}</ul>${more}`;
+  const mismatch = exhausted && loaded !== total
+    ? `<div class="cs-error">case group expected ${nf.format(total)} rows but found ${nf.format(loaded)}</div>`
+    : '';
+  body.innerHTML = `<ul class="cs-results" data-directory-results>${pager.rows.slice(0, pager.shown).map(renderCaseRow).join('')}</ul>${more}${mismatch}`;
   body.dataset.hydrated = '1';
+}
+
+function directoryPager(key, group) {
+  let pager = state.directoryHydratedRows.get(key);
+  if (!pager) {
+    const sources = uniqueDirectorySources([group]).sort((a, b) => b.path.localeCompare(a.path));
+    pager = {
+      group,
+      sources,
+      readers: sources.map((source) => state.directoryClient.openTail(source)),
+      index: 0,
+      rows: [],
+      seen: new Set(),
+      shown: 0,
+    };
+    state.directoryHydratedRows.set(key, pager);
+  }
+  return pager;
+}
+
+// Reads shard chunks, newest first, until `target` matching rows are in hand.
+async function fillDirectoryPager(pager, target, progress) {
+  while (pager.rows.length < target && pager.index < pager.readers.length) {
+    const reader = pager.readers[pager.index];
+    const batch = [];
+    for (const row of await reader.next()) {
+      if (!rowMatchesGroup(row, pager.group)) continue;
+      const rowKey = normalizeCaseKey(row.case_number);
+      if (!rowKey || pager.seen.has(rowKey)) continue;
+      pager.seen.add(rowKey);
+      batch.push(row);
+    }
+    pager.rows.push(...rememberCases(batch));
+    if (reader.done) pager.index += 1;
+    progress?.update({
+      bytesLoaded: pager.readers.reduce((sum, item) => sum + item.bytesLoaded, 0),
+      shardsLoaded: pager.index,
+      recordsLoaded: pager.rows.length,
+    });
+  }
+  pager.shown = Math.min(pager.rows.length, target);
+}
+
+async function loadDirectoryGroupPage(details, body, pager, target) {
+  const progress = createLoadProgress({
+    phase: `Loading ${pager.group.caseType} ${pager.group.location} ${pager.group.year}`,
+    bytesTotal: pager.sources.reduce((sum, source) => sum + num(source.size_bytes), 0),
+    shardsTotal: pager.sources.length,
+    recordsTotal: pager.group.rows,
+  });
+  const unsubscribe = mountLoadProgress(body, progress, { ariaLabel: 'Case rows loaded' });
+  try {
+    await fillDirectoryPager(pager, target, progress);
+    if (details.isConnected) renderDirectoryGroupRows(body, details.getAttribute('data-directory-group-key'), pager);
+  } catch (error) {
+    if (details.isConnected) {
+      body.innerHTML = `<div class="cs-error">${escapeHtml(error.message || String(error))} <button type="button" class="hbtn" data-directory-retry="${escapeHtml(details.getAttribute('data-directory-group-key'))}">Retry</button></div>`;
+    }
+  } finally {
+    unsubscribe();
+  }
 }
 
 async function hydrateDirectoryYearGroup(details) {
@@ -1294,75 +1350,27 @@ async function hydrateDirectoryYearGroup(details) {
   const key = details.getAttribute('data-directory-group-key');
   const group = state.directoryGroupRows.get(key);
   const body = details.querySelector('[data-directory-group-body]');
-  if (!group || !body || body.dataset.hydrated === '1') return;
-  if (state.directoryHydratedRows.has(key)) {
-    try {
-      const rows = await state.directoryHydratedRows.get(key);
-      if (details.isConnected) {
-        renderDirectoryGroupRows(body, key, rows);
-      }
-    } catch {
-      // The original loader renders the actionable error.
-    }
-    return;
-  }
-
-  const sources = uniqueDirectorySources([group]);
-  const progress = createLoadProgress({
-    phase: `Loading ${group.caseType} ${group.location} ${group.year}`,
-    bytesTotal: sources.reduce((sum, source) => sum + num(source.size_bytes), 0),
-    shardsTotal: sources.length,
-    recordsTotal: sources.reduce((sum, source) => sum + num(source.rows), 0),
-  });
-  const unsubscribe = mountLoadProgress(body, progress, { ariaLabel: 'Case rows loaded' });
-  const promise = (async () => {
-    const bytesByPath = new Map();
-    let shardsLoaded = 0;
-    let recordsLoaded = 0;
-    const results = [];
-    for (const source of sources) {
-      const result = await state.directoryClient.loadSource(source, {
-        onProgress: ({ loaded }) => {
-          bytesByPath.set(source.path, loaded);
-          progress.update({ bytesLoaded: [...bytesByPath.values()].reduce((sum, value) => sum + value, 0) });
-        },
-        onPhase: () => progress.update({ phase: `Indexing ${group.year} case rows` }),
-      });
-      bytesByPath.set(source.path, result.bytesLoaded);
-      shardsLoaded += 1;
-      recordsLoaded += result.rows.length;
-      results.push(...result.rows);
-      progress.update({
-        bytesLoaded: [...bytesByPath.values()].reduce((sum, value) => sum + value, 0),
-        shardsLoaded,
-        recordsLoaded,
-      });
-    }
-    const unique = new Map();
-    for (const row of results) {
-      if (!rowMatchesGroup(row, group)) continue;
-      const rowKey = normalizeCaseKey(row.case_number);
-      if (rowKey) unique.set(rowKey, row);
-    }
-    if (unique.size !== group.rows) {
-      throw new Error(`case group expected ${nf.format(group.rows)} rows but found ${nf.format(unique.size)}`);
-    }
-    return sortCaseRows(rememberCases([...unique.values()]), 'filed_desc');
-  })();
-  state.directoryHydratedRows.set(key, promise);
+  if (!group || !body || body.dataset.hydrated === '1' || body.dataset.loading === '1') return;
+  const pager = directoryPager(key, group);
+  body.dataset.loading = '1';
   try {
-    const rows = await promise;
-    state.directoryHydratedRows.set(key, rows);
-    if (details.isConnected) {
-      renderDirectoryGroupRows(body, key, rows);
-    }
-  } catch (error) {
-    state.directoryHydratedRows.delete(key);
-    if (details.isConnected) {
-      body.innerHTML = `<div class="cs-error">${escapeHtml(error.message || String(error))} <button type="button" class="hbtn" data-directory-retry="${escapeHtml(key)}">Retry</button></div>`;
-    }
+    await loadDirectoryGroupPage(details, body, pager, Math.max(pager.shown, DIRECTORY_PAGE_SIZE));
   } finally {
-    unsubscribe();
+    delete body.dataset.loading;
+  }
+}
+
+async function showMoreDirectoryRows(details, button) {
+  const key = details.getAttribute('data-directory-group-key');
+  const pager = state.directoryHydratedRows.get(key);
+  const body = details.querySelector('[data-directory-group-body]');
+  if (!pager || !body || body.dataset.loading === '1') return;
+  body.dataset.loading = '1';
+  button.disabled = true;
+  try {
+    await loadDirectoryGroupPage(details, body, pager, pager.shown + DIRECTORY_PAGE_SIZE);
+  } finally {
+    delete body.dataset.loading;
   }
 }
 

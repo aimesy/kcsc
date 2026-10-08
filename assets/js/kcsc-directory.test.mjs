@@ -110,4 +110,29 @@ await assert.rejects(retryClient.loadSource(source), /HTTP 503/);
 assert.equal((await retryClient.loadSource(source)).rows[0].case_number, 'recovered');
 assert.equal(retryFetches, 2);
 
+const tailLines = Array.from({ length: 40 }, (_, i) => JSON.stringify({ case_number: `26200${String(i).padStart(3, '0')}SEA`, note: 'é'.repeat(i % 5) }));
+const tailBytes = new TextEncoder().encode(`${tailLines.join('\n')}\n`);
+const ranges = [];
+const tailClient = createDirectoryClient({
+  base: 'https://data.example/root/',
+  fetchImpl: async (_url, init) => {
+    const [, from, to] = /bytes=(\d+)-(\d+)/.exec(init.headers.Range);
+    ranges.push([Number(from), Number(to)]);
+    return new Response(tailBytes.slice(Number(from), Number(to) + 1), { status: 206 });
+  },
+});
+const tail = tailClient.openTail({ path: 'archive/cases-index/262.ndjson', size_bytes: tailBytes.byteLength }, { chunkBytes: 1024 });
+const tailNumbers = [];
+while (!tail.done) tailNumbers.push(...(await tail.next()).map((row) => row.case_number));
+assert.deepEqual(tailNumbers, tailLines.map((line) => JSON.parse(line).case_number).reverse());
+assert.ok(ranges.length > 1 && ranges[0][1] === tailBytes.byteLength - 1);
+assert.equal(tail.bytesLoaded, tailBytes.byteLength);
+
+const noRange = createDirectoryClient({
+  base: 'https://data.example/root/',
+  fetchImpl: async () => new Response('{"case_number":"a"}\n{"case_number":"b"}\n'),
+}).openTail({ path: 'archive/cases-index/262.ndjson', size_bytes: 40 });
+assert.deepEqual((await noRange.next()).map((row) => row.case_number), ['b', 'a']);
+assert.equal(noRange.done, true);
+
 console.log('KCSC directory checks passed');

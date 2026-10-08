@@ -1,6 +1,7 @@
 import { fetchTextWithProgress } from './load-progress.js';
 
 export const KCSC_DIRECTORY_FORMAT = 'kcsc-case-directory-v1';
+export const DIRECTORY_CHUNK_BYTES = 1024 * 1024;
 
 function clean(value) {
   return value == null ? '' : String(value).replace(/\u00a0/g, ' ').trim();
@@ -231,8 +232,69 @@ export function createDirectoryClient(options = {}) {
     }
   }
 
+  // Reads a shard newest first (the shard is in case number order) in
+  // byte-range chunks, so opening a year costs one chunk, not the whole shard.
+  function openTail(source, options = {}) {
+    const path = safeDirectoryPath(source?.path);
+    if (!path) throw new Error('invalid KCSC directory source');
+    const url = sourceUrl(path);
+    const chunkBytes = Math.max(1024, Number(options.chunkBytes) || DIRECTORY_CHUNK_BYTES);
+    const size = Number(source.size_bytes);
+    let end = Number.isSafeInteger(size) && size >= 0 ? size : null;
+    let carry = new Uint8Array(0);
+    let bytesLoaded = 0;
+    let done = end === 0;
+    const decoder = new TextDecoder();
+
+    function finish(bytes) {
+      const rows = parseNdjsonRows(decoder.decode(bytes)).reverse();
+      done = true;
+      carry = new Uint8Array(0);
+      return rows;
+    }
+
+    async function next() {
+      if (done) return [];
+      if (end == null) {
+        const fetched = await fetchTextWithProgress(url, { cache: 'no-cache' }, { fetchImpl });
+        bytesLoaded += fetched.bytesLoaded;
+        return finish(new TextEncoder().encode(fetched.text));
+      }
+      const start = Math.max(0, end - chunkBytes);
+      const response = await fetchImpl(url, {
+        cache: 'no-cache',
+        headers: { Range: `bytes=${start}-${end - 1}` },
+      });
+      if (!response.ok) throw new Error(`${url} HTTP ${response.status}`);
+      const body = new Uint8Array(await response.arrayBuffer());
+      bytesLoaded += body.byteLength;
+      if (response.status !== 206) return finish(body);
+      if (body.byteLength !== end - start) throw new Error(`${url} returned ${body.byteLength} bytes for a ${end - start} byte range`);
+      const joined = new Uint8Array(body.byteLength + carry.byteLength);
+      joined.set(body, 0);
+      joined.set(carry, body.byteLength);
+      end = start;
+      if (start === 0) return finish(joined);
+      const newline = joined.indexOf(10);
+      if (newline < 0) {
+        carry = joined;
+        return [];
+      }
+      carry = joined.slice(0, newline);
+      return parseNdjsonRows(decoder.decode(joined.subarray(newline + 1))).reverse();
+    }
+
+    return {
+      next,
+      get done() { return done; },
+      get bytesLoaded() { return bytesLoaded; },
+      get bytesTotal() { return end == null ? null : size; },
+    };
+  }
+
   return {
     loadSource,
+    openTail,
     sourceUrl,
     clear(path = '') {
       if (path) cache.delete(safeDirectoryPath(path));
