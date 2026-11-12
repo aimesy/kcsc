@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import vm from 'node:vm';
 
 const root = process.cwd();
 
@@ -21,6 +22,41 @@ const app = read('assets/js/kcsc-viewer.js');
 const terms = read('terms.html');
 const dataClient = read('assets/js/kcsc-data-client.js');
 const statistics = read('assets/js/kcsc-statistics.js');
+
+// A case route must not survive switching workspaces or returning to results.
+// Exercise the viewer's actual route functions with browser URL/history state.
+const routeFunctions = ['replaceScopeInLocation', 'pushCaseHash', 'clearCaseHash', 'requestedCaseFromLocation']
+  .map((name) => {
+    const start = app.indexOf(`function ${name}(`);
+    const end = app.indexOf('\nfunction ', start + 1);
+    return app.slice(start, end < 0 ? undefined : end);
+  }).join('\n');
+let routeUrl;
+const routeContext = vm.createContext({
+  URL, URLSearchParams,
+  location: {},
+  history: Object.fromEntries(['pushState', 'replaceState'].map((method) => [method, (_state, _title, next) => {
+    routeUrl = new URL(next);
+    Object.assign(routeContext.location, { href: routeUrl.href, search: routeUrl.search, hash: routeUrl.hash });
+  }])),
+});
+function routeAt(value) {
+  routeUrl = new URL(value);
+  Object.assign(routeContext.location, { href: routeUrl.href, search: routeUrl.search, hash: routeUrl.hash });
+}
+vm.runInContext(routeFunctions, routeContext);
+for (const scope of ['statistics', 'parties', 'counsel', 'cases']) {
+  routeAt('https://kcsc.amyc.us/?dataBase=./fixture/&case=OLD#case=OLD&tab=raw&keep=yes');
+  vm.runInContext(`replaceScopeInLocation(${JSON.stringify(scope)})`, routeContext);
+  assert(routeUrl.searchParams.get('scope') === (scope === 'cases' ? null : scope), `${scope} must remain shareable`);
+  assert(!vm.runInContext('requestedCaseFromLocation()', routeContext), `${scope} must clear the previous case`);
+  assert(routeUrl.hash === '#keep=yes' && routeUrl.searchParams.get('dataBase') === './fixture/', 'workspace routing must preserve unrelated parameters');
+}
+routeAt('https://kcsc.amyc.us/?case=OLD#tab=docket');
+vm.runInContext("pushCaseHash('NEW', 'hearings')", routeContext);
+assert(vm.runInContext('requestedCaseFromLocation()', routeContext) === 'NEW', 'a query-string case must not override the next case');
+vm.runInContext('clearCaseHash()', routeContext);
+assert(!vm.runInContext('requestedCaseFromLocation()', routeContext), 'Back to results must clear query-string and hash case routes');
 const sharedThemeAssets = new Set([
   'theme.css',
   'theme-bar.css',

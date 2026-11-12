@@ -669,8 +669,9 @@ async function loadData() {
   if (initialCase) {
     await openCase(initialCase, { push: false });
   } else {
-    renderResults();
+    if (state.scope === 'parties' || state.scope === 'counsel') await ensureEntityData(state.scope);
     setStatus('loaded', archiveReadyText());
+    renderResults();
   }
 }
 
@@ -799,8 +800,13 @@ function scheduleResults(delay = 260) {
 
 function replaceScopeInLocation(scope) {
   const url = new URL(location.href);
-  if (scope === 'statistics') url.searchParams.set('scope', 'statistics');
-  else url.searchParams.delete('scope');
+  if (scope === 'cases') url.searchParams.delete('scope');
+  else url.searchParams.set('scope', scope);
+  url.searchParams.delete('case');
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
+  hashParams.delete('case');
+  hashParams.delete('tab');
+  url.hash = hashParams.toString();
   history.replaceState(null, '', url);
 }
 
@@ -984,12 +990,23 @@ function bindEvents() {
   }, true);
 
   window.addEventListener('popstate', async () => {
+    const scope = requestedScopeFromLocation();
+    state.scope = scope;
+    applyScopeUi(scope);
     const requested = requestedCaseFromLocation();
     if (requested) {
       await openCase(requested, { push: false });
     } else {
       state.selectedCaseNumber = '';
       state.selectedCase = null;
+      if (scope === 'parties' || scope === 'counsel') {
+        try {
+          await ensureEntityData(scope);
+        } catch (err) {
+          showBodyError(err.message || String(err), `entity:${scope}`);
+          return;
+        }
+      }
       renderResults();
     }
   });
@@ -1011,6 +1028,7 @@ function requestedTabFromLocation() {
 
 function pushCaseHash(caseNumber, tab = '', options = {}) {
   const url = new URL(location.href);
+  url.searchParams.delete('case');
   const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
   hashParams.set('case', caseNumber);
   if (tab && tab !== 'summary') hashParams.set('tab', tab);
@@ -1021,6 +1039,7 @@ function pushCaseHash(caseNumber, tab = '', options = {}) {
 
 function clearCaseHash() {
   const url = new URL(location.href);
+  url.searchParams.delete('case');
   const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
   hashParams.delete('case');
   hashParams.delete('tab');
